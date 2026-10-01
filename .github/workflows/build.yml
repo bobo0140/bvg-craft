@@ -1,0 +1,44 @@
+name: Build BVG Craft
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build EXE
+        run: >
+          pyinstaller --onefile --windowed --noconfirm
+          --name BVGCraft
+          --add-data "ui;ui"
+          --collect-all webview
+          --hidden-import clr
+          bvgcraft.py
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: BVG Craft (последен build)
+          body: "Свали BVGCraft.exe и го пусни. Настройките и сървърът се създават до него."
+          files: dist/BVGCraft.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

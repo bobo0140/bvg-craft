@@ -1,0 +1,287 @@
+/*
+  BVG Craft — контролна зала.
+  Основата е каменна и тиха. Цветът идва само от духовете и е взет
+  от истинските цветови кодове на чата в Minecraft (§6 §b §d §a).
+*/
+:root {
+  --stone-900: #1d2028;
+  --stone-800: #262a33;
+  --stone-700: #2f3440;
+  --stone-600: #3b4150;
+  --stone-500: #4b5263;
+  --parchment: #ece8dd;
+  --muted: #9ba1ad;
+  --faint: #6b7280;
+
+  --gold: #ffaa00;     /* §6 Пазителят */
+  --aqua: #55ffff;     /* §b Майсторът */
+  --purple: #ff55ff;   /* §d Шегаджията */
+  --green: #55ff55;    /* §a Мара */
+  --red: #ff5555;      /* §c */
+
+  --pixel: "Pixelify Sans", "Golos Text", system-ui, sans-serif;
+  --body: "Golos Text", "Segoe UI", system-ui, sans-serif;
+
+  --r-sm: 4px;
+  --r-md: 8px;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--stone-800);
+  color: var(--parchment);
+  font: 15px/1.55 var(--body);
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.shell { display: grid; grid-template-columns: 236px 1fr; height: 100vh; }
+
+/* ---------- лява лента ---------- */
+.rail {
+  background: var(--stone-900);
+  border-right: 1px solid var(--stone-700);
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 20px 14px;
+}
+.brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 22px; }
+.brand-mark {
+  width: 22px; height: 22px; image-rendering: pixelated;
+  background:
+    linear-gradient(var(--gold) 0 0) 0 0 / 50% 50% no-repeat,
+    linear-gradient(var(--aqua) 0 0) 100% 0 / 50% 50% no-repeat,
+    linear-gradient(var(--purple) 0 0) 0 100% / 50% 50% no-repeat,
+    linear-gradient(var(--green) 0 0) 100% 100% / 50% 50% no-repeat;
+}
+.brand-name { font: 700 19px/1 var(--pixel); letter-spacing: .5px; }
+
+.nav {
+  appearance: none; border: 0; background: none; color: var(--muted);
+  font: 500 14.5px/1 var(--body); text-align: left;
+  padding: 11px 12px; border-radius: var(--r-sm); cursor: pointer;
+}
+.nav:hover { color: var(--parchment); background: var(--stone-800); }
+.nav.is-active { color: var(--parchment); background: var(--stone-700); }
+
+.power { margin-top: auto; display: grid; gap: 10px; padding-top: 16px;
+  border-top: 1px solid var(--stone-700); }
+.power-state { display: flex; align-items: center; gap: 9px; font-size: 13.5px;
+  color: var(--muted); padding: 0 4px; }
+.lamp { width: 9px; height: 9px; background: var(--stone-500); }
+.lamp.on { background: var(--green); box-shadow: 0 0 10px var(--green); }
+.lamp.starting { background: var(--gold); animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: .35; } }
+
+/* ---------- сцена ---------- */
+.stage { overflow-y: auto; padding: 38px 48px 60px; }
+.view { display: none; max-width: 1080px; }
+.view.is-active { display: block; }
+.view-head { margin-bottom: 28px; }
+h1 { font: 700 40px/1.05 var(--pixel); margin: 0 0 8px; letter-spacing: .3px; }
+h2 { font: 600 15px/1.3 var(--body); color: var(--muted); margin: 0 0 14px; }
+.lede { color: var(--muted); margin: 0; max-width: 62ch; }
+
+.panel {
+  background: var(--stone-700); border-radius: var(--r-md);
+  padding: 20px 22px;
+}
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 30px; }
+.empty { color: var(--faint); margin: 0; }
+
+/* ---------- знамената на духовете ---------- */
+.banners { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+.banner {
+  position: relative; min-height: 236px; padding: 22px 18px 54px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--c) 18%, var(--stone-700)) 0%,
+                    var(--stone-700) 70%);
+  border-top: 4px solid var(--c);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% calc(100% - 34px), 0 100%);
+}
+.banner::before { /* прътът, на който виси знамето */
+  content: ""; position: absolute; left: -6px; right: -6px; top: -4px;
+  height: 4px; background: var(--stone-500);
+}
+.banner .glyph {
+  width: 40px; height: 40px; margin-bottom: 16px; image-rendering: pixelated;
+  background: var(--c);
+  -webkit-mask: var(--m) center / contain no-repeat;
+          mask: var(--m) center / contain no-repeat;
+}
+.banner h3 { font: 700 21px/1.1 var(--pixel); margin: 0 0 6px; color: var(--c); }
+.banner p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.45; }
+.banner .where { margin-top: 14px; font-size: 12.5px; color: var(--faint); }
+.banner .where.placed { color: var(--parchment); }
+.banner.dim { opacity: .55; }
+
+.c-keeper    { --c: var(--gold); }
+.c-builder   { --c: var(--aqua); }
+.c-trickster { --c: var(--purple); }
+.c-trader    { --c: var(--green); }
+
+/* пикселни знаци — рисувани с SVG маска, по един за всеки дух */
+.c-keeper    { --m: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath d='M3 0h2v1h1v2h1v2H6v2H5v1H3V7H2V5H1V3h1V1h1z'/%3E%3C/svg%3E"); }
+.c-builder   { --m: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath d='M0 1h6v2H5v5H3V3H0z'/%3E%3C/svg%3E"); }
+.c-trickster { --m: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath d='M1 1h2v2H1zM5 1h2v2H5zM0 4h8v1H7v1H6v1H2V6H1V5H0z'/%3E%3C/svg%3E"); }
+.c-trader    { --m: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8' shape-rendering='crispEdges'%3E%3Cpath d='M2 0h4v1h1v2H6v1h1v3H6v1H2V7H1V4h1V3H1V1h1z'/%3E%3C/svg%3E"); }
+
+/* ---------- играчи онлайн ---------- */
+.online { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.online li:not(.empty) { display: flex; align-items: center; gap: 10px; }
+.head {
+  --h: var(--stone-500);
+  width: 26px; height: 26px; flex: none; border-radius: 2px; position: relative;
+  background: var(--h);
+}
+.head::after { /* две пикселни очи */
+  content: ""; position: absolute; left: 6px; top: 11px; width: 4px; height: 4px;
+  background: var(--stone-900); box-shadow: 10px 0 var(--stone-900);
+}
+.event-now strong { font: 700 22px/1.2 var(--pixel); display: block; margin-bottom: 4px; }
+.event-now span { color: var(--muted); font-size: 13.5px; }
+.event-now + .btn { margin-top: 16px; }
+
+/* ---------- бутони и полета ---------- */
+.btn {
+  appearance: none; border: 1px solid var(--stone-500); cursor: pointer;
+  background: var(--stone-600); color: var(--parchment);
+  font: 600 14px/1 var(--body); padding: 11px 16px; border-radius: var(--r-sm);
+}
+.btn:hover { border-color: var(--muted); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn-primary { background: var(--parchment); color: var(--stone-900); border-color: var(--parchment); }
+.btn-primary:hover { background: #fff; }
+.btn-danger { background: none; color: var(--red); border-color: color-mix(in srgb, var(--red) 45%, transparent); }
+.btn-ghost { background: none; }
+.btn-sm { padding: 7px 11px; font-size: 13px; }
+
+.form { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 24px;
+  background: var(--stone-700); padding: 24px; border-radius: var(--r-md); }
+.field { display: grid; gap: 6px; align-content: start; }
+.field.narrow { max-width: 280px; margin: 18px 0 26px; }
+label { font-weight: 600; font-size: 13.5px; }
+small, .hint { color: var(--faint); font-size: 12.5px; }
+input, select {
+  font: inherit; color: var(--parchment); background: var(--stone-800);
+  border: 1px solid var(--stone-600); border-radius: var(--r-sm);
+  padding: 10px 12px; width: 100%;
+}
+input:focus, select:focus { border-color: var(--muted); outline: none; }
+.toggles { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.toggle { display: flex; align-items: center; gap: 12px; font-weight: 500; cursor: pointer; }
+.toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.toggle span {
+  width: 38px; height: 22px; flex: none; background: var(--stone-500);
+  border-radius: 2px; position: relative;
+}
+.toggle span::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+  background: var(--parchment); transition: transform .15s steps(3);
+}
+.toggle input:checked + span { background: var(--green); }
+.toggle input:checked + span::after { transform: translateX(16px); background: var(--stone-900); }
+.toggle input:focus-visible + span { outline: 2px solid var(--gold); outline-offset: 2px; }
+.actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; }
+.inline { display: flex; gap: 10px; }
+.inline input { flex: 1; }
+
+/* ---------- проверки ---------- */
+.checks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+.check { background: var(--stone-700); border-radius: var(--r-md); padding: 16px 18px;
+  border-left: 3px solid var(--stone-500); }
+.check.ok { border-left-color: var(--green); }
+.check.bad { border-left-color: var(--red); }
+.check b { display: block; font-size: 13.5px; margin-bottom: 3px; }
+.check span { color: var(--muted); font-size: 13px; display: block; margin-bottom: 10px; }
+.progress { position: relative; height: 30px; background: var(--stone-700); border-radius: var(--r-sm);
+  margin-bottom: 18px; overflow: hidden; }
+.progress .bar { position: absolute; inset: 0 auto 0 0; background: var(--aqua); opacity: .35; width: 0; }
+.progress span { position: relative; line-height: 30px; padding-left: 12px; font-size: 13px; }
+.console { margin-top: 22px; }
+
+/* ---------- играчи ---------- */
+.add-player { max-width: 520px; margin-bottom: 14px; }
+.join-info { color: var(--muted); font-size: 13.5px; margin-bottom: 24px; }
+.join-info code { color: var(--parchment); font-family: var(--body); font-weight: 600; }
+.roster { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.roster li {
+  display: grid; grid-template-columns: 26px 1fr auto; align-items: center; gap: 14px;
+  background: var(--stone-700); padding: 12px 16px; border-radius: var(--r-md);
+}
+.roster .name { font-weight: 600; }
+.roster .tags { display: inline-flex; gap: 6px; margin-left: 10px; }
+.tag { font-size: 11.5px; padding: 2px 7px; border-radius: 2px; background: var(--stone-600); color: var(--muted); }
+.tag.live { background: color-mix(in srgb, var(--green) 20%, var(--stone-700)); color: var(--green); }
+.tag.admin { background: color-mix(in srgb, var(--gold) 20%, var(--stone-700)); color: var(--gold); }
+.roster .row-actions { display: flex; gap: 8px; }
+
+/* ---------- духовете (подробно) ---------- */
+.spirits { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.spirit { background: var(--stone-700); border-radius: var(--r-md);
+  padding: 22px; border-left: 4px solid var(--c); display: grid; gap: 14px; }
+.spirit h3 { font: 700 22px/1.1 var(--pixel); margin: 0; color: var(--c); }
+.spirit-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+.link-danger { appearance: none; background: none; border: 0; padding: 4px 0; cursor: pointer;
+  color: var(--faint); font: 500 13px/1 var(--body); }
+.link-danger:hover { color: var(--red); }
+.spirit .calls { color: var(--muted); font-size: 13px; margin: 4px 0 0; }
+.spirit .row { display: flex; gap: 8px; }
+.spirit select { flex: 1; min-width: 140px; }
+
+/* ---------- събития ---------- */
+.chaos { max-width: 520px; }
+.chaos input[type=range] { padding: 0; accent-color: var(--purple); }
+.chaos-scale { display: flex; justify-content: space-between; color: var(--faint); font-size: 12.5px; margin-top: 4px; }
+.chaos-note { color: var(--muted); font-size: 13.5px; margin: 10px 0 0; min-height: 21px; }
+.event-note { color: var(--gold); font-size: 13.5px; margin: 0 0 12px; min-height: 21px; }
+.event-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.ev {
+  text-align: left; appearance: none; cursor: pointer; color: var(--parchment);
+  background: var(--stone-700); border: 1px solid transparent; border-radius: var(--r-md);
+  padding: 16px 18px; display: grid; gap: 6px; font: inherit;
+}
+.ev:hover:not(:disabled) { border-color: var(--stone-500); }
+.ev:disabled { opacity: .45; cursor: not-allowed; }
+.ev b { font: 700 17px/1.2 var(--pixel); }
+.ev span { color: var(--muted); font-size: 13px; line-height: 1.45; }
+
+/* ---------- лог ---------- */
+.view-head:has(.filters) { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
+.filters { display: flex; gap: 6px; }
+.chip { appearance: none; border: 1px solid var(--stone-600); background: none; color: var(--muted);
+  font: 500 13px/1 var(--body); padding: 8px 12px; border-radius: 2px; cursor: pointer; }
+.chip.is-on { color: var(--parchment); border-color: var(--muted); }
+.log { background: var(--stone-900); border-radius: var(--r-md); padding: 14px 16px;
+  height: calc(100vh - 210px); overflow-y: auto; font-size: 13px; line-height: 1.6; }
+.log .l { display: grid; grid-template-columns: 64px 118px 1fr; gap: 10px; }
+.log .t { color: var(--faint); font-variant-numeric: tabular-nums; }
+.log .s { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log .ok .m { color: var(--green); }
+.log .warn .m { color: var(--gold); }
+.log .error .m { color: var(--red); }
+.log .console .m { color: var(--faint); }
+
+/* ---------- съобщение ---------- */
+.toast {
+  position: fixed; right: 28px; bottom: 28px; max-width: 420px;
+  background: var(--parchment); color: var(--stone-900);
+  padding: 13px 18px; border-radius: var(--r-sm); font-weight: 600;
+  transform: translateY(16px); opacity: 0; visibility: hidden;
+  transition: transform .2s, opacity .2s, visibility .2s;
+}
+.toast.show { transform: none; opacity: 1; visibility: visible; }
+.toast.bad { background: var(--red); color: var(--stone-900); }
+
+@media (max-width: 1180px) {
+  .banners { grid-template-columns: repeat(2, 1fr); }
+  .event-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 860px) {
+  .shell { grid-template-columns: 1fr; }
+  .rail { flex-direction: row; overflow-x: auto; }
+  .split, .form, .spirits, .checks, .toggles { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

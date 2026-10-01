@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="bg">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BVG Craft</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Pixelify+Sans:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="shell">
+
+  <nav class="rail" aria-label="Раздели">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">BVG Craft</span>
+    </div>
+    <button class="nav is-active" data-view="home">Табло</button>
+    <button class="nav" data-view="server">Сървър</button>
+    <button class="nav" data-view="players">Играчи</button>
+    <button class="nav" data-view="spirits">Духовете</button>
+    <button class="nav" data-view="events">Събития</button>
+    <button class="nav" data-view="ai">Изкуствен разум</button>
+    <button class="nav" data-view="log">Лог</button>
+
+    <div class="power">
+      <div class="power-state" id="powerState">
+        <span class="lamp" id="lamp"></span>
+        <span id="powerText">Спрян</span>
+      </div>
+      <button class="btn btn-primary" id="powerBtn">Пусни сървъра</button>
+    </div>
+  </nav>
+
+  <main class="stage">
+
+    <!-- ТАБЛО -->
+    <section class="view is-active" id="view-home">
+      <header class="view-head">
+        <h1 id="homeTitle">Светът спи</h1>
+        <p class="lede" id="homeLede">Пусни сървъра, за да оживеят духовете.</p>
+      </header>
+
+      <div class="banners" id="banners"></div>
+
+      <div class="split">
+        <div class="panel">
+          <h2>Сега в света</h2>
+          <ul class="online" id="onlineList"><li class="empty">Никой не е влязъл.</li></ul>
+        </div>
+        <div class="panel">
+          <h2>Събитие</h2>
+          <div id="eventNow" class="event-now"><p class="empty">Нищо не върви в момента.</p></div>
+          <button class="btn btn-ghost" id="randomEvent">Изненадай ги</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- СЪРВЪР -->
+    <section class="view" id="view-server">
+      <header class="view-head">
+        <h1>Сървър</h1>
+        <p class="lede">Версия, памет и правила на света.</p>
+      </header>
+
+      <div class="checks" id="checks"></div>
+      <div class="progress" id="progress" hidden><div class="bar" id="bar"></div><span id="progressText"></span></div>
+
+      <form class="form" id="serverForm" autocomplete="off">
+        <div class="field">
+          <label for="mc_version">Версия на Minecraft</label>
+          <select id="mc_version" name="mc_version"><option value="">Най-новата</option></select>
+          <small>Трябва да съвпада с версията в лаунчера.</small>
+        </div>
+        <div class="field">
+          <label for="ram_gb">Памет</label>
+          <select id="ram_gb" name="ram_gb" data-type="int">
+            <option value="2">2 GB</option><option value="4">4 GB</option>
+            <option value="6">6 GB</option><option value="8">8 GB</option>
+            <option value="10">10 GB</option><option value="12">12 GB</option>
+            <option value="16">16 GB</option>
+          </select>
+          <small>За 10–20 играчи сложи поне 6 GB.</small>
+        </div>
+        <div class="field">
+          <label for="gc_profile">Управление на паметта</label>
+          <select id="gc_profile" name="gc_profile">
+            <option value="g1">Стандартно — препоръка на Paper</option>
+            <option value="zgc">Без засичания — за 10 GB и нагоре</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="difficulty">Трудност</label>
+          <select id="difficulty" name="difficulty">
+            <option value="peaceful">Мирна</option><option value="easy">Лесна</option>
+            <option value="normal">Нормална</option><option value="hard">Трудна</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="gamemode">Режим на игра</label>
+          <select id="gamemode" name="gamemode">
+            <option value="survival">Оцеляване</option><option value="creative">Творчески</option>
+            <option value="adventure">Приключение</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="max_players">Максимум играчи</label>
+          <input id="max_players" name="max_players" type="number" min="1" max="200" data-type="int">
+        </div>
+        <div class="field">
+          <label for="view_distance">Далечина на гледане</label>
+          <input id="view_distance" name="view_distance" type="number" min="4" max="32" data-type="int">
+          <small>В чънкове. 10 е добър баланс.</small>
+        </div>
+        <div class="field">
+          <label for="motd">Надпис в списъка със сървъри</label>
+          <input id="motd" name="motd" maxlength="59">
+        </div>
+        <div class="toggles">
+          <label class="toggle"><input type="checkbox" name="pvp"><span></span>Играчите могат да се бият</label>
+          <label class="toggle"><input type="checkbox" name="hardcore"><span></span>Хардкор — един живот</label>
+          <label class="toggle"><input type="checkbox" name="offline_mode"><span></span>Без купен акаунт (TLauncher)</label>
+          <label class="toggle"><input type="checkbox" name="open_to_network"><span></span>Приятели от мрежата да влизат</label>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" type="submit">Запази</button>
+          <span class="hint">Важи от следващото пускане.</span>
+        </div>
+      </form>
+
+      <div class="panel console">
+        <h2>Конзола</h2>
+        <form id="consoleForm" class="inline">
+          <input id="consoleInput" placeholder="say здравейте" autocomplete="off">
+          <button class="btn" type="submit">Изпрати</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ИГРАЧИ -->
+    <section class="view" id="view-players">
+      <header class="view-head">
+        <h1>Играчи</h1>
+        <p class="lede">Влизат само хората от този списък.</p>
+      </header>
+      <form class="inline add-player" id="addPlayer">
+        <input id="newPlayer" placeholder="Име в играта" maxlength="16" autocomplete="off">
+        <button class="btn btn-primary" type="submit">Добави</button>
+      </form>
+      <div class="join-info" id="joinInfo"></div>
+      <ul class="roster" id="roster"></ul>
+    </section>
+
+    <!-- ДУХОВЕТЕ -->
+    <section class="view" id="view-spirits">
+      <header class="view-head">
+        <h1>Духовете</h1>
+        <p class="lede">Четири създания с изкуствен разум. Застани някъде в играта и ги призови до себе си.</p>
+      </header>
+      <div class="spirits" id="spirits"></div>
+    </section>
+
+    <!-- СЪБИТИЯ -->
+    <section class="view" id="view-events">
+      <header class="view-head">
+        <h1>Събития</h1>
+        <p class="lede">Пазителят пуска изненади сам. Можеш и ти.</p>
+      </header>
+      <div class="chaos">
+        <label for="chaos">Колко лудо да е</label>
+        <input type="range" id="chaos" min="0" max="3" step="1">
+        <div class="chaos-scale"><span>Тихо</span><span>Леко</span><span>Весело</span><span>Хаос</span></div>
+        <p class="chaos-note" id="chaosNote"></p>
+      </div>
+      <div class="field narrow">
+        <label for="director_minutes">Изненада на всеки</label>
+        <select id="director_minutes" data-type="int">
+          <option value="4">4 минути</option><option value="8">8 минути</option>
+          <option value="12">12 минути</option><option value="20">20 минути</option>
+        </select>
+      </div>
+      <p class="event-note" id="eventNote"></p>
+      <div class="event-grid" id="eventGrid"></div>
+    </section>
+
+    <!-- AI -->
+    <section class="view" id="view-ai">
+      <header class="view-head">
+        <h1>Изкуствен разум</h1>
+        <p class="lede">Gemini е безплатен и не иска карта. Ключ се взема от aistudio.google.com/apikey.</p>
+      </header>
+      <form class="form" id="aiForm" autocomplete="off">
+        <div class="field">
+          <label for="ai_provider">Услуга</label>
+          <select id="ai_provider" name="ai_provider">
+            <option value="gemini">Gemini — безплатно</option>
+            <option value="openai">OpenAI — платено</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="gemini_key">Ключ за Gemini</label>
+          <input id="gemini_key" name="gemini_key" type="password" placeholder="Постави ключа тук">
+        </div>
+        <div class="field">
+          <label for="gemini_model">Модел на Gemini</label>
+          <input id="gemini_model" name="gemini_model">
+        </div>
+        <div class="field">
+          <label for="openai_key">Ключ за OpenAI</label>
+          <input id="openai_key" name="openai_key" type="password" placeholder="По желание">
+        </div>
+        <div class="toggles">
+          <label class="toggle"><input type="checkbox" name="ai_enabled"><span></span>Духовете говорят</label>
+          <label class="toggle"><input type="checkbox" name="roast_deaths"><span></span>Коментират смъртите</label>
+          <label class="toggle"><input type="checkbox" name="greet_joins"><span></span>Посрещат влезлите</label>
+        </div>
+        <div class="actions">
+          <button class="btn btn-primary" type="submit">Запази</button>
+          <button class="btn" type="button" id="testAi">Провери ключа</button>
+          <span class="hint" id="aiResult"></span>
+        </div>
+      </form>
+    </section>
+
+    <!-- ЛОГ -->
+    <section class="view" id="view-log">
+      <header class="view-head">
+        <h1>Лог</h1>
+        <div class="filters" id="logFilters">
+          <button class="chip is-on" data-f="all">Всичко</button>
+          <button class="chip" data-f="game">Без конзолата</button>
+          <button class="chip" data-f="problems">Само проблеми</button>
+        </div>
+      </header>
+      <div class="log" id="log" role="log" aria-live="polite"></div>
+    </section>
+
+  </main>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="app.js"></script>
+</body>
+</html>
