@@ -37,6 +37,8 @@ jobs:
           print(len(mods), 'modules OK')"
 
       - name: Check interface calls match the backend
+        env:
+          PYTHONIOENCODING: utf-8
         run: python tools/check_ui_calls.py
 
       - name: Build EXE

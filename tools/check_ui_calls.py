@@ -1,4 +1,10 @@
 """Сверява всяко извикване от JS с подписа на метода в Python."""
+import sys
+# Конзолата на Windows е cp1252 и не може да отпечата ✓ и кирилица
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 import re, sys, inspect, os, tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import paths
