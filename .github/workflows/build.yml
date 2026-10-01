@@ -24,6 +24,18 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Check every module imports
+        # Хваща липсващ файл тук, вместо като счупен .exe при потребителя
+        run: >
+          python -c "import pkgutil, importlib, app, app.main;
+          mods = [m.name for m in pkgutil.walk_packages(app.__path__, 'app.')];
+          [importlib.import_module(m) for m in mods];
+          need = {'app.server.manager', 'app.server.rcon', 'app.server.events',
+          'app.ai.brain', 'app.game.events_lib', 'app.api'};
+          missing = need - set(mods);
+          assert not missing, f'липсват: {missing}';
+          print(len(mods), 'modules OK')"
+
       - name: Build EXE
         run: >
           pyinstaller --onefile --windowed --noconfirm
