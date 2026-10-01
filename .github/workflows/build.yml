@@ -36,6 +36,9 @@ jobs:
           assert not missing, f'липсват: {missing}';
           print(len(mods), 'modules OK')"
 
+      - name: Check interface calls match the backend
+        run: python tools/check_ui_calls.py
+
       - name: Build EXE
         run: >
           pyinstaller --onefile --windowed --noconfirm

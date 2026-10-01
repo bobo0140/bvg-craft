@@ -112,7 +112,7 @@ class Api:
 
     # ---------- сваляния ----------
 
-    def get_java(self):
+    def get_java(self, *_ignored):
         ver = manager.paper_version()
         need = manager.required_java(ver)
 

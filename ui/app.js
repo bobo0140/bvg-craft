@@ -146,7 +146,9 @@ function renderServer() {
   $$("#checks [data-fn]").forEach(b => b.addEventListener("click", async () => {
     b.disabled = true;
     const ver = $("#mc_version").value || null;
-    await call(b.dataset.fn, b.dataset.fn === "get_paper" ? ver : undefined);
+    // Не пращаме празен аргумент — pywebview го превръща в null
+    if (b.dataset.fn === "get_paper") await call("get_paper", ver);
+    else await call(b.dataset.fn);
   }));
 
   const p = S.progress;
