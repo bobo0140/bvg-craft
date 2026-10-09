@@ -6,8 +6,10 @@ Paper се сваля от fill.papermc.io/v3 (старото v2 е изключ
 върви на Java 21.
 """
 
+import collections
 import hashlib
 import json
+import time
 import os
 import re
 import shutil
@@ -50,8 +52,20 @@ G1_FLAGS = [
     "-Daikars.new.flags=true",
 ]
 # ZGC — по-малки паузи; на Java 25 е генерационен по подразбиране
-ZGC_FLAGS = ["-XX:+UseZGC", "-XX:+UseStringDeduplication",
-             "-XX:+AlwaysPreTouch", "-XX:TrimNativeHeapInterval=5000"]
+ZGC_FLAGS = ["-XX:+UseZGC", "-XX:+AlwaysPreTouch"]
+
+# Първи в списъка: непознат флаг за дадена версия на Java иначе спира
+# цялата JVM още преди да е тръгнал сървърът.
+SAFE_FLAGS = ["-XX:+IgnoreUnrecognizedVMOptions"]
+
+# Без тях Java на български Windows пише конзолата в cp1251, а чатът с
+# кирилица пристига като шум. terminal.* спират цветовете в конзолата.
+ENCODING_FLAGS = [
+    "-Dfile.encoding=UTF-8", "-Dstdout.encoding=UTF-8",
+    "-Dstderr.encoding=UTF-8", "-Dsun.stdout.encoding=UTF-8",
+    "-Dsun.stderr.encoding=UTF-8", "-Dstdin.encoding=UTF-8",
+    "-Dterminal.jline=false", "-Dterminal.ansi=false",
+]
 
 
 # ---------- версии и Java ----------
@@ -140,6 +154,15 @@ def download_java(major: int, progress=None) -> str | None:
         return None
 
 
+def ver_tuple(v):
+    """„1.21.4" -> (1, 21, 4); „26.1.2" -> (26, 1, 2); непознато -> None."""
+    m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", v or "")
+    return tuple(int(x or 0) for x in m.groups()) if m else None
+
+
+MIN_SUPPORTED = (1, 21, 5)   # от тази версия командите имат нужния формат
+
+
 def list_versions() -> list[str]:
     """Стабилните версии на Paper, най-новата първа."""
     try:
@@ -153,7 +176,10 @@ def list_versions() -> list[str]:
     for names in groups.values():
         for n in names:
             low = n.lower()
-            if not any(x in low for x in ("-rc", "-pre", "snapshot")):
+            t = ver_tuple(n)
+            if any(x in low for x in ("-rc", "-pre", "snapshot")):
+                continue
+            if t and t >= MIN_SUPPORTED:
                 out.append(n)
     return out
 
@@ -161,9 +187,11 @@ def list_versions() -> list[str]:
 def find_paper() -> str | None:
     if not os.path.isdir(paths.SERVER):
         return None
-    jars = sorted(f for f in os.listdir(paths.SERVER)
-                  if f.startswith("paper-") and f.endswith(".jar"))
-    return os.path.join(paths.SERVER, jars[-1]) if jars else None
+    # Най-новият свален, не азбучно последният: „1.21.9" < „1.21.10"
+    # по азбука, а и при неуспешно триене остават два файла.
+    jars = [os.path.join(paths.SERVER, f) for f in os.listdir(paths.SERVER)
+            if f.startswith("paper-") and f.endswith(".jar")]
+    return max(jars, key=os.path.getmtime) if jars else None
 
 
 def paper_version(jar=None) -> str | None:
@@ -202,9 +230,17 @@ def download_paper(version=None) -> str | None:
         with requests.get(url, headers=PAPER_HEADERS, stream=True,
                           timeout=180) as resp:
             resp.raise_for_status()
-            with open(dest, "wb") as f:
+            # Първо във временен файл: прекъснато сваляне не бива да
+            # остави счупен .jar, който после изглежда като готов сървър.
+            part = dest + ".part"
+            with open(part, "wb") as f:
                 for chunk in resp.iter_content(1 << 20):
                     f.write(chunk)
+            if os.path.getsize(part) < 1_000_000:
+                os.remove(part)
+                raise RuntimeError("файлът е подозрително малък")
+            os.replace(part, dest)
+            os.utime(dest, None)
         for f in os.listdir(paths.SERVER):
             if f.startswith("paper-") and f.endswith(".jar") and f != name:
                 try:
@@ -282,6 +318,7 @@ def write_properties(cfg):
         "enable-command-block": "true",
         "allow-flight": "true",
         "sync-chunk-writes": "false",   # по-малко засичания на диска
+        "level-name": "world",
     }
     path = os.path.join(paths.SERVER, "server.properties")
     existing = {}
@@ -306,6 +343,11 @@ class Server:
         self.proc = None
         self.ready = False
         self.online = set()
+        self.ips = {}               # име -> последен IP
+        self.joined_at = {}         # име -> кога е влязъл
+        self.left_at = {}           # име -> кога е излязъл
+        self.recent = collections.deque(maxlen=60)
+        self.last_line = 0.0
 
     @property
     def running(self):
@@ -313,7 +355,8 @@ class Server:
 
     def build_command(self, java, jar):
         ram = max(1, int(self.cfg.get("ram_gb")))
-        cmd = [java, f"-Xms{ram}G", f"-Xmx{ram}G"]
+        cmd = [java] + SAFE_FLAGS + ENCODING_FLAGS + [f"-Xms{ram}G",
+                                                     f"-Xmx{ram}G"]
         if self.cfg.get("gc_profile") == "zgc":
             cmd += ZGC_FLAGS
             if (java_version(java) or 0) >= 25:
@@ -352,27 +395,30 @@ class Server:
         self.online.clear()
         self.proc = subprocess.Popen(
             cmd, cwd=paths.SERVER, stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-            encoding="utf-8", errors="replace", bufsize=1,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         threading.Thread(target=self._pump, daemon=True).start()
         return True, "Пуска се..."
 
     def _pump(self):
-        for line in self.proc.stdout:
-            line = line.rstrip()
+        # Четем байтове и декодираме ред по ред: така един счупен ред не
+        # разваля следващите и кирилицата не става шум.
+        for raw in iter(self.proc.stdout.readline, b""):
+            line = events.clean(events.decode(raw.rstrip(b"\r\n")))
             if not line:
                 continue
+            self.last_line = time.time()
+            self.recent.append(line)
             log.console(line)
-            ev = events.parse(line, self.online)
+            try:
+                ev = events.parse(line, self.online)
+            except Exception as e:
+                log.error("Конзола", f"Ред, който не мога да разчета: "
+                                     f"{type(e).__name__} — {line[:80]}")
+                continue
             if not ev:
                 continue
-            if ev["type"] == "ready":
-                self.ready = True
-            elif ev["type"] == "join":
-                self.online.add(ev["player"])
-            elif ev["type"] == "leave":
-                self.online.discard(ev["player"])
+            self.apply(ev)
             if self.on_event:
                 try:
                     self.on_event(ev)
@@ -384,13 +430,29 @@ class Server:
         if self.on_event:
             self.on_event({"type": "stopped"})
 
+    def apply(self, ev):
+        """Отразява събитие в състоянието (кой е онлайн, IP, готовност)."""
+        t = ev["type"]
+        if t == "ready":
+            self.ready = True
+        elif t == "join":
+            self.online.add(ev["player"])
+            self.joined_at[ev["player"]] = time.time()
+        elif t == "leave":
+            self.online.discard(ev["player"])
+            self.left_at[ev["player"]] = time.time()
+        elif t == "login":
+            self.ips[ev["player"]] = ev["ip"]
+
     def command(self, text):
+        """Пише в конзолата на сървъра. Процесът е в байтов режим, затова
+        кодираме сами — в UTF-8, както казва -Dstdin.encoding."""
         if self.running:
             try:
-                self.proc.stdin.write(text + "\n")
+                self.proc.stdin.write((text + "\n").encode("utf-8"))
                 self.proc.stdin.flush()
-            except OSError:
-                pass
+            except (OSError, ValueError) as e:
+                log.warn("Конзола", f"Не можах да изпратя „{text[:40]}“: {e}")
 
     def stop(self, wait=60):
         if not self.running:

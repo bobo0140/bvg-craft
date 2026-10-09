@@ -262,6 +262,74 @@ input:focus, select:focus { border-color: var(--muted); outline: none; }
 .log .error .m { color: var(--red); }
 .log .console .m { color: var(--faint); }
 
+/* ---------- здраве: какво работи ---------- */
+.lede.small { font-size: 13.5px; }
+.alert { background: color-mix(in srgb, var(--red) 16%, var(--stone-800)); color: var(--parchment);
+  border-left: 3px solid var(--red); padding: 10px 14px; border-radius: var(--r-sm);
+  font-size: 13.5px; margin-bottom: 18px; }
+.health { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: -6px 0 28px; }
+.h-item { background: var(--stone-700); border-radius: var(--r-md); padding: 11px 14px;
+  display: grid; grid-template-columns: 8px 1fr; column-gap: 10px; align-items: center; min-width: 0; }
+.dot { width: 8px; height: 8px; background: var(--stone-500); flex: none; }
+.ok > .dot { background: var(--green); }
+.bad > .dot { background: var(--red); }
+.wait > .dot { background: var(--stone-500); }
+.h-item b { font-size: 13.5px; font-weight: 600; }
+.h-item small { grid-column: 2; color: var(--muted); font-size: 12.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.h-item.bad small { color: color-mix(in srgb, var(--red) 70%, var(--parchment)); }
+
+.diag { margin-top: 18px; }
+.diag-head { display: flex; justify-content: space-between; align-items: start; gap: 20px; }
+.diag-head h2 { margin-bottom: 6px; }
+.diag-head .btn { flex: none; }
+.diag-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.diag-list:not(:empty) { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--stone-600); }
+.diag-list li { display: grid; grid-template-columns: 20px 1fr; column-gap: 8px; padding: 5px 0; font-size: 13.5px; }
+.diag-list li.empty { display: block; }
+.diag-list .mark { font-weight: 700; text-align: center; color: var(--faint); }
+.diag-list .ok .mark, .diag-list li.ok .mark { color: var(--green); }
+.diag-list li.bad .mark { color: var(--red); }
+.diag-list small { grid-column: 2; color: var(--muted); font-size: 12.5px; word-break: break-word; }
+.diag-list li.bad small { color: color-mix(in srgb, var(--red) 70%, var(--parchment)); }
+
+.online small.ip { margin-left: auto; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* ---------- свят ---------- */
+.world { margin-bottom: 18px; }
+.world-head { display: flex; justify-content: space-between; align-items: start; gap: 20px; margin-bottom: 14px; }
+.world-head h2 { margin-bottom: 6px; }
+.world-head .btn { flex: none; }
+.world-now, .wline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.world-now { padding: 12px 14px; background: var(--stone-800); border-radius: var(--r-sm); margin-bottom: 14px; }
+.world-now b, .wline b { font: 700 17px/1.2 var(--pixel); }
+.world-now span, .wline span { color: var(--muted); font-size: 13px; }
+.world-now .tagline { color: var(--faint); font-size: 12px; margin-right: 2px; }
+.world-pick { display: grid; grid-template-columns: auto auto 1fr; gap: 10px; }
+.world-found { margin-top: 16px; }
+.wcard { border: 1px solid var(--stone-500); border-radius: var(--r-md); padding: 16px 18px; display: grid; gap: 10px; }
+.wcard.done { border-color: color-mix(in srgb, var(--green) 55%, transparent); }
+.wcard p { margin: 0; }
+.wpath { color: var(--faint); font-size: 12.5px; word-break: break-all; }
+.warn { color: var(--gold); font-size: 13.5px; padding-left: 12px; border-left: 2px solid currentColor; }
+.warn.bad, .bad-text { color: var(--red); }
+.wcard .actions { margin-top: 4px; }
+.wcard .toggle { font-size: 13.5px; }
+
+/* ---------- играчи: IP и статистика ---------- */
+.roster .meta { display: block; color: var(--faint); font-size: 12.5px; margin-top: 2px; }
+.roster .meta .ip { color: var(--muted); font-variant-numeric: tabular-nums; user-select: all; }
+.roster .meta .kind { margin-left: 4px; }
+.roster li.is-live { box-shadow: inset 3px 0 0 var(--green); }
+
+/* ---------- AI състояние ---------- */
+.ai-status { display: grid; grid-template-columns: 8px 1fr; column-gap: 12px; align-items: center;
+  background: var(--stone-700); border-radius: var(--r-md); padding: 14px 18px; margin-bottom: 18px; }
+.ai-status b { display: block; font-size: 14px; }
+.ai-status small { display: block; color: var(--muted); font-size: 13px; }
+.ai-status.bad small { color: color-mix(in srgb, var(--red) 70%, var(--parchment)); }
+.ai-status .tip { color: var(--gold); }
+
 /* ---------- съобщение ---------- */
 .toast {
   position: fixed; right: 28px; bottom: 28px; max-width: 420px;
@@ -274,13 +342,15 @@ input:focus, select:focus { border-color: var(--muted); outline: none; }
 .toast.bad { background: var(--red); color: var(--stone-900); }
 
 @media (max-width: 1180px) {
-  .banners { grid-template-columns: repeat(2, 1fr); }
+  .banners, .health { grid-template-columns: repeat(2, 1fr); }
   .event-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 860px) {
   .shell { grid-template-columns: 1fr; }
   .rail { flex-direction: row; overflow-x: auto; }
-  .split, .form, .spirits, .checks, .toggles { grid-template-columns: 1fr; }
+  .split, .form, .spirits, .checks, .toggles, .world-pick { grid-template-columns: 1fr; }
+  .roster li { grid-template-columns: 26px 1fr; }
+  .roster .row-actions { grid-column: 1 / -1; flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }

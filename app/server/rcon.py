@@ -82,9 +82,12 @@ class Rcon:
             for i in range(0, len(cmds), batch):
                 chunk = cmds[i:i + batch]
                 ids = [self._send(T_CMD, c) for c in chunk]
+                idset = set(ids)
                 got, seen = {}, 0
                 while seen < len(ids):
                     pid, _, body = self._read()
+                    if pid not in idset:
+                        continue        # остатък от предишен дълъг отговор
                     if pid in got:
                         got[pid] += body
                     else:
@@ -108,6 +111,9 @@ class Sender:
         self.rcon = None
         self.errors = 0
         self.enabled = False
+        self.last_ok = 0.0          # кога последно има успешен обмен
+        self.last_error = ""
+        self.fail_streak = 0
         threading.Thread(target=self._worker, daemon=True).start()
 
     def _client(self):
@@ -133,10 +139,13 @@ class Sender:
         if not self.enabled:
             return False, "сървърът не върви"
         try:
-            return True, self._client().run(command)
+            reply = self._client().run(command)
+            self.last_ok, self.fail_streak = time.time(), 0
+            return True, reply
         except Exception as e:
             self._drop()
-            return False, f"{type(e).__name__}: {e}"
+            self.last_error = f"{type(e).__name__}: {e}"
+            return False, self.last_error
 
     def _drop(self):
         if self.rcon:
@@ -166,9 +175,22 @@ class Sender:
             try:
                 for c, r in self._client().run_many(batch):
                     self._check(c, r)
+                self.last_ok, self.fail_streak = time.time(), 0
             except Exception as e:
-                log.warn("RCON", f"Връзката падна: {e}. Пробвам пак.")
+                self.last_error = f"{type(e).__name__}: {e}"
+                self.fail_streak += 1
                 self._drop()
+                if self.fail_streak >= 4:
+                    # Парола или порт, които не са верни, не се оправят с
+                    # повече опити; иначе опашката се върти вечно.
+                    log.error("RCON", f"Не мога да говоря със сървъра "
+                                      f"({self.last_error}). Пускам "
+                                      f"{len(batch)} команди.")
+                    self.fail_streak = 0
+                    time.sleep(3)
+                    continue
+                log.warn("RCON", f"Връзката падна: {e}. Опит "
+                                 f"{self.fail_streak}/4.")
                 for c in batch:
                     self.q.put(c)
                 time.sleep(1.5)

@@ -31,6 +31,7 @@ jobs:
           mods = [m.name for m in pkgutil.walk_packages(app.__path__, 'app.')];
           [importlib.import_module(m) for m in mods];
           need = {'app.server.manager', 'app.server.rcon', 'app.server.events',
+          'app.server.monitor', 'app.server.worldio',
           'app.ai.brain', 'app.game.events_lib', 'app.api'};
           missing = need - set(mods);
           assert not missing, f'липсват: {missing}';

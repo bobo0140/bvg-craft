@@ -35,6 +35,7 @@
   </nav>
 
   <main class="stage">
+    <div class="alert" id="stateError" hidden></div>
 
     <!-- ТАБЛО -->
     <section class="view is-active" id="view-home">
@@ -42,6 +43,8 @@
         <h1 id="homeTitle">Светът спи</h1>
         <p class="lede" id="homeLede">Пусни сървъра, за да оживеят духовете.</p>
       </header>
+
+      <div class="health" id="health" aria-label="Какво работи"></div>
 
       <div class="banners" id="banners"></div>
 
@@ -56,6 +59,17 @@
           <button class="btn btn-ghost" id="randomEvent">Изненадай ги</button>
         </div>
       </div>
+
+      <div class="panel diag">
+        <div class="diag-head">
+          <div>
+            <h2>Пълна проверка</h2>
+            <p class="lede small">Пробва на живия сървър всичко, което приложението прави: духове, надписи, събития, позиции на играчите и изкуствения разум.</p>
+          </div>
+          <button class="btn" id="diagBtn">Провери всичко</button>
+        </div>
+        <ul class="diag-list" id="diagList"></ul>
+      </div>
     </section>
 
     <!-- СЪРВЪР -->
@@ -67,6 +81,26 @@
 
       <div class="checks" id="checks"></div>
       <div class="progress" id="progress" hidden><div class="bar" id="bar"></div><span id="progressText"></span></div>
+
+      <div class="panel world">
+        <div class="world-head">
+          <div>
+            <h2>Свят</h2>
+            <p class="lede small">Внеси свят от стар сървър — цялата папка на сървъра, само папката на света или .zip архив. Сегашният свят не се трие, а отива в папка <b>_backups</b>.</p>
+          </div>
+          <button class="btn btn-sm btn-ghost" id="openServerDir" type="button">Отвори папката</button>
+        </div>
+        <div class="world-now" id="worldNow"><p class="empty">Проверявам...</p></div>
+        <div class="world-pick">
+          <button class="btn" id="pickFolder" type="button">Избери папка</button>
+          <button class="btn" id="pickZip" type="button">Избери .zip</button>
+          <form class="inline" id="worldPathForm" autocomplete="off">
+            <input id="worldPath" placeholder="…или постави пътя, напр. D:\Стар сървър">
+            <button class="btn" type="submit">Провери</button>
+          </form>
+        </div>
+        <div class="world-found" id="worldFound" hidden></div>
+      </div>
 
       <form class="form" id="serverForm" autocomplete="off">
         <div class="field">
@@ -143,7 +177,7 @@
     <section class="view" id="view-players">
       <header class="view-head">
         <h1>Играчи</h1>
-        <p class="lede">Влизат само хората от този списък.</p>
+        <p class="lede">Влизат само хората от този списък. IP адресите виждаш само ти — в играта не се показват.</p>
       </header>
       <form class="inline add-player" id="addPlayer">
         <input id="newPlayer" placeholder="Име в играта" maxlength="16" autocomplete="off">
@@ -191,6 +225,7 @@
         <h1>Изкуствен разум</h1>
         <p class="lede">Gemini е безплатен и не иска карта. Ключ се взема от aistudio.google.com/apikey.</p>
       </header>
+      <div class="ai-status" id="aiStatus"></div>
       <form class="form" id="aiForm" autocomplete="off">
         <div class="field">
           <label for="ai_provider">Услуга</label>

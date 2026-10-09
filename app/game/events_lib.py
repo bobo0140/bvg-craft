@@ -447,9 +447,13 @@ class Engine:
         ok, why = self.can_start(key)
         if not ok:
             return False, why
-        ev = LIBRARY[key](self, **kw) if kw else LIBRARY[key](self)
-        self.active = ev
-        ev.start()
+        try:
+            ev = LIBRARY[key](self, **kw) if kw else LIBRARY[key](self)
+            self.active = ev
+            ev.start()
+        except Exception as e:
+            self.active = None
+            return False, f"грешка при старта ({type(e).__name__}: {e})"
         self.history.append((time.time(), key))
         return True, ev.title
 
@@ -459,15 +463,31 @@ class Engine:
         self.active = None
 
     def tick(self):
-        if self.active:
-            if self.active.done:
-                self.active = None
-            else:
-                self.active.tick()
+        a = self.active
+        if not a:
+            return
+        if a.done:
+            self.active = None
+            return
+        if not self.online():
+            a.done = True            # всички излязоха — няма за кого
+            self.active = None
+            return
+        try:
+            a.tick()
+        except Exception as e:
+            # Едно счупено събитие не бива да спамва лога на всеки 2 сек
+            a.done = True
+            self.active = None
+            raise RuntimeError(f"Събитието „{a.title}“ спря: "
+                               f"{type(e).__name__}: {e}") from e
 
     def feed(self, ev):
         if self.active and not self.active.done:
-            self.active.on_event(ev)
+            try:
+                self.active.on_event(ev)
+            except Exception:
+                pass
 
     def pick(self, chaos):
         """Случайно събитие, съобразено с хаоса и броя играчи."""

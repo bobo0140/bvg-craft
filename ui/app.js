@@ -77,12 +77,31 @@ function esc(s) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+/* true → зелено, false → червено, null → сиво (не е проверено) */
+const cls = ok => ok === true ? "ok" : ok === false ? "bad" : "wait";
+const mark = ok => ok === true ? "✓" : ok === false ? "✗" : "–";
+
+function ago(sec) {
+  if (sec == null) return "";
+  if (sec < 60) return `${sec} сек`;
+  if (sec < 3600) return `${Math.round(sec / 60)} мин`;
+  return `${Math.round(sec / 3600)} ч`;
+}
+
+function plural(n, one, many) {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+function rosterMap() {
+  return Object.fromEntries((S.roster || []).map(r => [r.name, r]));
+}
+
 /* ---------- навигация ---------- */
 $$(".nav").forEach(b => b.addEventListener("click", () => {
   $$(".nav").forEach(n => n.classList.toggle("is-active", n === b));
   $$(".view").forEach(v => v.classList.toggle("is-active",
     v.id === "view-" + b.dataset.view));
-  if (b.dataset.view === "server") loadVersions();
+  if (b.dataset.view === "server") { loadVersions(); loadWorld(); }
 }));
 
 /* ---------- рисуване ---------- */
@@ -113,16 +132,51 @@ function renderHome() {
         ${c.enabled ? "В света" : "Още не е призован"}</p>
     </article>`).join("");
 
+  const R = rosterMap();
   $("#onlineList").innerHTML = S.online.length
-    ? S.online.map(p => `<li>${head(p)}${esc(p)}</li>`).join("")
-    : `<li class="empty">${S.ready ? "Никой не е влязъл." : "Сървърът не върви."}</li>`;
+    ? S.online.map(p => `<li>${head(p)}<span>${esc(p)}</span>${
+        R[p] && R[p].ip ? `<small class="ip" title="${esc(R[p].ip_kind || "")}">${esc(R[p].ip)}</small>` : ""}</li>`).join("")
+    : `<li class="empty">${S.ready ? "Никой не е влязъл." : S.running ? "Сървърът още зарежда." : "Сървърът не върви."}</li>`;
 
   const ev = S.event;
   $("#eventNow").innerHTML = ev
     ? `<strong>${esc(EVENT_NAMES[ev.key] || ev.title)}</strong><span>Остават ${ev.left} секунди</span>`
     : `<p class="empty">Нищо не върви в момента.</p>`;
   $("#randomEvent").textContent = ev ? "Спри събитието" : "Изненадай ги";
-  $("#randomEvent").disabled = !S.ready;
+  $("#randomEvent").disabled = !S.ready || (!ev && !S.online.length);
+}
+
+function renderHealth() {
+  $("#health").innerHTML = (S.health || []).map(h => `
+    <div class="h-item ${cls(h.ok)}" title="${esc(h.detail)}">
+      <span class="dot"></span><b>${esc(h.name)}</b><small>${esc(h.detail)}</small>
+    </div>`).join("");
+  const err = $("#stateError");
+  err.hidden = !S.state_error;
+  if (S.state_error) err.textContent = `Таблото не успя да се обнови: ${S.state_error}. Показвам последното известно.`;
+}
+
+function renderAi() {
+  const h = (S.health || []).find(x => x.name === "Изкуствен разум") || {};
+  const a = S.ai || {};
+  const title = h.ok === true ? "Работи" : h.ok === false ? "Не работи" : "Още не е питан";
+  const stats = a.ok || a.err
+    ? `${plural(a.ok, "отговор", "отговора")}, ${plural(a.err, "грешка", "грешки")}${a.last_ok_ago != null ? `, последен преди ${ago(a.last_ok_ago)}` : ""}`
+    : "";
+  let tip = "";
+  const d = String(h.detail || "");
+  // При „работи" подробността е само броят — показваме статистиката вместо нея
+  const line = h.ok === true ? stats : [d, stats].filter(Boolean).join(" · ");
+  if (/key not valid|API_KEY_INVALID|401|403|Грешка 400/i.test(d))
+    tip = "Ключът не е приет. Копирай го наново от aistudio.google.com/apikey и го постави долу.";
+  else if (/Няма ключ/.test(d))
+    tip = "Без ключ духовете посрещат и коментират с готови реплики, а събитията вървят нормално. За разговори сложи безплатен ключ.";
+  else if (/лимит/i.test(d))
+    tip = "Безплатният лимит се нулира всеки ден. Дотогава духовете ползват готови реплики.";
+  const box = $("#aiStatus");
+  box.className = "ai-status " + cls(h.ok);
+  box.innerHTML = `<span class="dot"></span><div><b>${title}</b>
+    <small>${esc(line)}</small>${tip ? `<small class="tip">${esc(tip)}</small>` : ""}</div>`;
 }
 
 function renderServer() {
@@ -155,35 +209,50 @@ function renderServer() {
   $("#progress").hidden = !p;
   if (p) {
     $("#bar").style.width = Math.round((p.value || 0) * 100) + "%";
-    $("#progressText").textContent = `Свалям ${p.what}...`;
+    $("#progressText").textContent = `${p.verb || "Свалям"} ${p.what}... ${Math.round((p.value || 0) * 100)}%`;
   }
+  syncImport();
 }
 
 function renderPlayers() {
   const wl = S.config.whitelist || [];
   const admins = S.config.admins || [];
-  const live = new Set(S.online);
-  const all = [...new Set([...wl, ...S.online])];
-  $("#roster").innerHTML = all.length ? all.map(n => `
-    <li>
+  // Сървърът праща готов списък с IP; ако е по-стара версия — смятаме тук
+  const list = S.roster || [...new Set([...wl, ...S.online])].map(n => ({
+    name: n, online: S.online.includes(n), whitelisted: wl.includes(n),
+    admin: admins.includes(n), ip: null, ip_kind: null, deaths: 0, visits: 0 }));
+  list.sort((a, b) => (b.online - a.online) || a.name.localeCompare(b.name));
+  $("#roster").innerHTML = list.length ? list.map(r => {
+    const n = r.name;
+    const meta = [
+      r.ip ? `IP <span class="ip">${esc(r.ip)}</span><span class="kind">(${esc(r.ip_kind || "")})</span>`
+           : "IP — още не е влизал",
+      r.visits ? plural(r.visits, "влизане", "влизания") : "",
+      r.deaths ? plural(r.deaths, "смърт", "смърти") : "",
+    ].filter(Boolean).join(" · ");
+    return `
+    <li class="${r.online ? "is-live" : ""}">
       ${head(n)}
       <span><span class="name">${esc(n)}</span><span class="tags">
-        ${live.has(n) ? '<span class="tag live">в света</span>' : ""}
-        ${admins.includes(n) ? '<span class="tag admin">админ</span>' : ""}
-        ${!wl.includes(n) ? '<span class="tag">не е в списъка</span>' : ""}
-      </span></span>
+        ${r.online ? '<span class="tag live">в света</span>' : ""}
+        ${r.admin ? '<span class="tag admin">админ</span>' : ""}
+        ${!r.whitelisted ? '<span class="tag">не е в списъка</span>' : ""}
+      </span><span class="meta">${meta}</span></span>
       <span class="row-actions">
-        ${live.has(n) ? `<button class="btn btn-sm" data-a="prank" data-n="${esc(n)}">Пусни номер</button>` : ""}
+        ${r.online ? `<button class="btn btn-sm" data-a="prank" data-n="${esc(n)}">Пусни номер</button>` : ""}
         <button class="btn btn-sm" data-a="admin" data-n="${esc(n)}">
-          ${admins.includes(n) ? "Махни админ" : "Направи админ"}</button>
-        ${wl.includes(n) ? `<button class="btn btn-sm btn-danger" data-a="remove" data-n="${esc(n)}">Махни</button>` : ""}
+          ${r.admin ? "Махни админ" : "Направи админ"}</button>
+        ${r.whitelisted ? `<button class="btn btn-sm btn-danger" data-a="remove" data-n="${esc(n)}">Махни</button>`
+          : `<button class="btn btn-sm" data-a="add" data-n="${esc(n)}">Добави в списъка</button>`}
       </span>
-    </li>`).join("")
+    </li>`;
+  }).join("")
     : `<li><span></span><span class="empty">Списъкът е празен. Добави първо себе си.</span><span></span></li>`;
 
   $$("#roster [data-a]").forEach(b => b.addEventListener("click", () => {
     const n = b.dataset.n;
     if (b.dataset.a === "remove") call("whitelist_remove", n).then(refresh);
+    if (b.dataset.a === "add") call("whitelist_add", n).then(refresh);
     if (b.dataset.a === "admin") call("toggle_admin", n).then(refresh);
     if (b.dataset.a === "prank") call("prank", n);
   }));
@@ -246,7 +315,10 @@ function renderEvents() {
     </button>`;
   }).join("");
   $("#eventNote").textContent = !S.ready ? "Пусни сървъра, за да пускаш събития."
-    : S.event ? `Сега върви „${EVENT_NAMES[S.event.key] || S.event.title}“. Изчакай да свърши.` : "";
+    : S.event ? `Сега върви „${EVENT_NAMES[S.event.key] || S.event.title}“. Изчакай да свърши.`
+    : !n ? "Няма никой в света — събитията чакат поне един играч."
+    : S.config.chaos ? `Пазителят пуска изненада на около ${S.config.director_minutes} минути. В света: ${n}.`
+    : "Изненадите са спрени (Тихо). Можеш да пускаш събития ръчно.";
   $$("#eventGrid .ev").forEach(b => b.addEventListener("click",
     () => call("event", b.dataset.k).then(refresh)));
   $("#chaosNote").textContent = CHAOS_TEXT[S.config.chaos] || "";
@@ -387,19 +459,155 @@ async function loadVersions() {
   sel.value = S?.config.mc_version || "";
 }
 
+/* ---------- стар свят ---------- */
+let worldCheck = null;          // последната успешна проверка на избран свят
+let importSeen;                 // id на последния показан резултат
+
+function worldLine(w) {
+  const bits = [
+    w.version ? `Minecraft ${w.version}` : "версия неизвестна",
+    w.size_mb ? `${w.size_mb} MB` : "",
+    w.last_played ? `играно на ${w.last_played}` : "",
+    w.nether ? "с Нетер и Края" : "",
+    w.hardcore ? "хардкор" : "",
+  ].filter(Boolean);
+  return `<b>${esc(w.name)}</b><span>${bits.map(esc).join(" · ")}</span>`;
+}
+
+async function loadWorld() {
+  let r = null;
+  try { r = await api.world_current(); } catch (e) { /* няма връзка */ }
+  $("#worldNow").innerHTML = r && r.world
+    ? `<span class="tagline">Сега:</span>${worldLine(r.world)}`
+    : `<p class="empty">Още няма свят — ще се създаде при първото пускане, или внеси стария.</p>`;
+}
+
+async function inspectWorld(path) {
+  path = (path || "").trim();
+  if (!path) return;
+  worldCheck = null;
+  const box = $("#worldFound");
+  box.hidden = false;
+  box.innerHTML = `<p class="empty">Чета света...</p>`;
+  let r = null;
+  try { r = await api.world_inspect(path); } catch (e) { r = { ok: false, error: String(e) }; }
+  if (!r || !r.ok) {
+    box.innerHTML = `<div class="wcard"><p class="warn bad">${esc(r ? r.error : "Грешка")}</p>
+      <p class="hint">Избери папката на стария сървър (там, където е server.properties), самата папка на света (с файл level.dat) или .zip с тях.</p></div>`;
+    return;
+  }
+  worldCheck = r;
+  const w = r.world, names = r.whitelist_names || [];
+  const alt = (w.alternatives || []).length > 1
+    ? `<p class="hint">Вътре има няколко свята (${esc(w.alternatives.join(", "))}). Взимам „${esc(w.folder)}“.</p>` : "";
+  box.innerHTML = `
+    <div class="wcard">
+      <div class="wline">${worldLine(w)}</div>
+      <p class="wpath">${esc(r.path)}</p>
+      ${alt}
+      ${r.blocked ? `<p class="warn bad">${esc(r.blocked)}</p>` : ""}
+      ${(r.warnings || []).map(x => `<p class="warn">${esc(x)}</p>`).join("")}
+      ${names.length ? `<label class="toggle"><input type="checkbox" id="mergeWl" checked><span></span>
+        Пусни и ${names.length} играчи от стария списък (${esc(names.slice(0, 6).join(", "))}${names.length > 6 ? "…" : ""})</label>` : ""}
+      <div class="actions">
+        <button class="btn btn-primary" id="doImport" type="button">Внеси този свят</button>
+        <span class="hint" id="importHint"></span>
+      </div>
+    </div>`;
+  $("#doImport").addEventListener("click", doImport);
+  syncImport();
+}
+
+function syncImport() {
+  const b = $("#doImport");
+  if (!b || !worldCheck || !S) return;
+  const busy = !!(S.progress && S.progress.verb);
+  b.disabled = !!worldCheck.blocked || S.running || busy;
+  $("#importHint").textContent = worldCheck.blocked ? ""
+    : S.running ? "Първо спри сървъра — светът не се сменя, докато върви."
+    : busy ? "Внасям..." : "Сегашният свят отива в _backups. Нищо не се трие.";
+}
+
+async function doImport() {
+  if (!worldCheck) return;
+  const merge = $("#mergeWl") ? $("#mergeWl").checked : false;
+  $("#doImport").disabled = true;
+  const r = await call("world_import", worldCheck.path, merge);
+  if (!r || !r.ok) syncImport();
+}
+
+function showImportResult(res) {
+  const box = $("#worldFound");
+  box.hidden = false;
+  worldCheck = null;
+  if (res.ok) {
+    box.innerHTML = `<div class="wcard done">
+      <div class="wline"><b>Светът е внесен</b></div>
+      <p>Пусни сървъра. Първото зареждане на голям или по-стар свят отнема малко повече.</p>
+      ${res.backup ? `<p class="wpath">Предишният свят е запазен в ${esc(res.backup)}</p>` : ""}
+      ${(res.added || []).length ? `<p class="hint">Добавени в списъка: ${esc(res.added.join(", "))}</p>` : ""}
+      <p class="hint">Ако духовете бяха призовани в стария свят, призови ги наново от раздел Духовете.</p>
+    </div>`;
+    toast("Светът е внесен.");
+  } else {
+    box.innerHTML = `<div class="wcard"><p class="warn bad">${esc(res.message || "Не се получи.")}</p>
+      <p class="hint">Сегашният свят е оставен както си беше.</p></div>`;
+    toast(res.message || "Внасянето не се получи.", true);
+  }
+  loadWorld();
+}
+
+$("#pickFolder").addEventListener("click", async () => {
+  const r = await call("world_pick", "folder");
+  if (r && r.path) { $("#worldPath").value = r.path; inspectWorld(r.path); }
+});
+$("#pickZip").addEventListener("click", async () => {
+  const r = await call("world_pick", "zip");
+  if (r && r.path) { $("#worldPath").value = r.path; inspectWorld(r.path); }
+});
+$("#worldPathForm").addEventListener("submit", e => {
+  e.preventDefault();
+  inspectWorld($("#worldPath").value);
+});
+$("#openServerDir").addEventListener("click", () => call("open_folder", "server"));
+
+/* ---------- пълна проверка ---------- */
+$("#diagBtn").addEventListener("click", async () => {
+  const b = $("#diagBtn");
+  b.disabled = true;
+  b.textContent = "Проверявам...";
+  $("#diagList").innerHTML = `<li class="empty">Пробвам командите на живия сървър. Отнема до 20 секунди.</li>`;
+  const r = await call("diagnose");
+  b.disabled = false;
+  b.textContent = "Провери всичко";
+  if (!r || !r.checks) { $("#diagList").innerHTML = ""; return; }
+  $("#diagList").innerHTML = r.checks.map(c => `
+    <li class="${cls(c.ok)}"><span class="mark">${mark(c.ok)}</span><span>${esc(c.name)}</span>${
+      c.detail ? `<small>${esc(c.detail)}</small>` : ""}</li>`).join("");
+  const bad = r.checks.filter(c => c.ok === false).length;
+  toast(bad ? `${bad} от проверките не минаха — виж кои.` : "Всичко работи.", bad > 0);
+});
+
 /* ---------- обновяване ---------- */
 async function refresh() {
   try {
     S = await api.state();
   } catch (e) { return; }
-  fillForms();
-  renderPower();
-  renderHome();
-  renderServer();
-  renderPlayers();
-  renderEvents();
+  if (!S) return;
+  const steps = [fillForms, renderPower, renderHealth, renderHome, renderServer,
+    renderPlayers, renderEvents, renderAi];
+  // Една счупена част не бива да спира останалите
+  for (const f of steps) {
+    try { f(); } catch (e) { console.error(f.name, e); }
+  }
   const active = document.activeElement;
-  if (!$("#view-spirits").contains(active)) renderSpirits();
+  if (!$("#view-spirits").contains(active)) {
+    try { renderSpirits(); } catch (e) { console.error(e); }
+  }
+  const res = S.import_result;
+  const id = res ? res.id : null;
+  if (importSeen === undefined) importSeen = id;     // старо от преди отварянето
+  else if (id && id !== importSeen) { importSeen = id; showImportResult(res); }
 }
 
 async function pollLogs() {

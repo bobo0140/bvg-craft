@@ -5,6 +5,7 @@ characters.py — героите на сървъра.
 нарочно различни: шегаджията прави номера, но не може да руши; майсторът
 строи, но не раздава предмети.
 """
+import re
 
 COMMON = """
 Ти си герой в Minecraft сървъра BVG WORLD. Играчите са българи.
@@ -25,7 +26,8 @@ COMMON = """
 CHARACTERS = {
     "keeper": {
         "name": "Пазителят",
-        "aliases": ["пазител", "пазителю", "пазителя", "keeper"],
+        "aliases": ["пазител", "пазителю", "пазителя", "пазителят",
+                    "пазителе", "keeper"],
         "color": "gold",
         "profession": "librarian",
         "powers": ["effects", "world", "items", "score", "mobs"],
@@ -37,7 +39,8 @@ CHARACTERS = {
     },
     "builder": {
         "name": "Майсторът",
-        "aliases": ["майстор", "майсторе", "майстора", "builder"],
+        "aliases": ["майстор", "майсторе", "майстора", "майсторът",
+                    "builder"],
         "color": "aqua",
         "profession": "mason",
         "powers": ["build", "effects", "world"],
@@ -49,8 +52,8 @@ CHARACTERS = {
     },
     "trickster": {
         "name": "Шегаджията",
-        "aliases": ["шегаджия", "шегаджийо", "шегаджията", "трикстър",
-                    "trickster"],
+        "aliases": ["шегаджия", "шегаджийо", "шегаджията", "шегаджиите",
+                    "трикстър", "trickster"],
         "color": "light_purple",
         "profession": "nitwit",
         "powers": ["effects", "mobs", "move"],
@@ -63,7 +66,8 @@ CHARACTERS = {
     },
     "trader": {
         "name": "Търговката Мара",
-        "aliases": ["мара", "маро", "търговка", "търговке", "trader"],
+        "aliases": ["мара", "маро", "мари", "търговка", "търговке",
+                    "търговката", "trader"],
         "color": "green",
         "profession": "cartographer",
         "powers": ["items", "effects"],
@@ -78,14 +82,18 @@ CHARACTERS = {
 
 
 def find_by_text(text: str):
-    """Кой герой е повикан в това съобщение, ако някой."""
+    """Кой герой е повикан в това съобщение, ако някой.
+
+    Търсим цяла дума: иначе „мара" се намира в „камара" и „пазител" в
+    „пазителите", и духът скача при разговор, който не е за него.
+    """
     low = text.lower()
     best = None
     for key, ch in CHARACTERS.items():
         for alias in ch["aliases"]:
-            pos = low.find(alias)
-            if pos != -1 and (best is None or pos < best[1]):
-                best = (key, pos)
+            m = re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", low)
+            if m and (best is None or m.start() < best[1]):
+                best = (key, m.start())
     return best[0] if best else None
 
 

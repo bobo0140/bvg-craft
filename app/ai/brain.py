@@ -90,23 +90,41 @@ class Brain:
         return self.players.setdefault(name, {"first": time.time(),
                                               "deaths": 0, "visits": 0})
 
+    def _note_ip(self, name, ip):
+        """Пази последните адреси на играча — само за собственика."""
+        info = self.player(name)
+        ips = [i for i in info.get("ips", []) if i != ip]
+        info["ips"] = ([ip] + ips)[:5]
+        info["last_ip"] = ip
+        info["last_seen"] = time.time()
+        self._save_players()
+
+    def last_ip(self, name):
+        return (self.players.get(name) or {}).get("last_ip")
+
     def is_admin(self, name):
         return name in (self.cfg.get("admins") or [])
 
     # ---------- цикъл ----------
 
     def start(self):
+        # Нов „рунд" при всяко пускане: стар цикъл, който още спи, вижда,
+        # че вече не е текущият, и спира — иначе събитията вървят двойно.
+        self._gen = getattr(self, "_gen", 0) + 1
         self._stop.clear()
-        threading.Thread(target=self._loop, daemon=True).start()
+        self.next_event = time.time() + 90
+        self.next_prank = time.time() + 240
+        threading.Thread(target=self._loop, args=(self._gen,),
+                         daemon=True).start()
 
     def stop(self):
         self._stop.set()
         self.engine.stop()
 
-    def _loop(self):
-        while not self._stop.is_set():
+    def _loop(self, gen):
+        while not self._stop.is_set() and gen == self._gen:
             time.sleep(2)
-            if not self.server.ready:
+            if not self.server.ready or gen != self._gen:
                 continue
             try:
                 self.engine.tick()
@@ -116,7 +134,7 @@ class Brain:
                 log.error("Мозък", f"{type(e).__name__}: {e}")
 
     def _director(self):
-        if not self.cfg.get("ai_enabled") or self.cfg.get("chaos") == 0:
+        if not self.cfg.get("chaos"):
             return
         if not self.server.online or self.engine.active:
             return
@@ -146,6 +164,8 @@ class Brain:
         if t == "ready":
             self.respawn_npcs()
             log.ok("Мозък", "Светът е готов. Героите са на местата си.")
+        elif t == "login":
+            self._note_ip(ev["player"], ev["ip"])
         elif t == "join":
             self._on_join(ev["player"])
         elif t == "death":
@@ -162,6 +182,7 @@ class Brain:
         info = self.player(name)
         first = info["visits"] == 0
         info["visits"] += 1
+        info["last_seen"] = time.time()
         self._save_players()
         if not self.cfg.get("greet_joins"):
             return

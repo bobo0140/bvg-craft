@@ -57,6 +57,21 @@ class RateLimiter:
 
 limiter = RateLimiter()
 
+# Какво е станало с последните заявки — за да се вижда защо AI-то мълчи
+STATS = {"ok": 0, "err": 0, "busy": 0, "last_ok": 0.0, "last_error": "",
+         "last_error_at": 0.0}
+
+
+def _note_ok():
+    STATS["ok"] += 1
+    STATS["last_ok"] = time.time()
+
+
+def _note_err(msg):
+    STATS["err"] += 1
+    STATS["last_error"] = msg
+    STATS["last_error_at"] = time.time()
+
 
 def _api_error(r) -> str:
     try:
@@ -78,7 +93,15 @@ def _classify(r, model, who):
     if r.status_code == 404:
         return False, f"Няма модел {model}: {d}"
     if r.status_code == 429:
-        low = d.lower()
+        low = d.lower().replace(" ", "")
+        if who == "Gemini":
+            # Безплатният тир има лимит на минута и лимит на ден
+            if "perday" in low:
+                limiter.back_off(600)
+                return False, ("Дневният безплатен лимит на Gemini свърши. "
+                               "Нулира се през нощта. Услугата е наред.")
+            limiter.back_off(20)
+            return True, f"Твърде много заявки в минута към Gemini. ({d})"
         if any(w in low for w in ("credit", "billing", "insufficient")):
             return False, (f"Нямаш кредити в {who}. Превключи на Gemini — "
                            f"безплатен е. ({d})")
@@ -152,8 +175,10 @@ def ask(cfg, system, messages, audio=None, timeout=45, force=False):
     provider = cfg.get("ai_provider") or "gemini"
     key = cfg.get("gemini_key" if provider == "gemini" else "openai_key")
     if not key:
+        _note_err("Няма API ключ.")
         return None, "Няма API ключ."
     if not force and not limiter.allow():
+        STATS["busy"] += 1
         return None, "busy"
 
     first = cfg.get("gemini_model" if provider == "gemini"
@@ -173,9 +198,15 @@ def ask(cfg, system, messages, audio=None, timeout=45, force=False):
             if not bad:
                 if model != first:
                     log.info("AI", f"{first} беше зает, отговори {model}.")
+                _note_ok()
                 return _parse_json(text), None
             retry, last = bad
             if not retry:
+                if "Няма модел" in last and i < len(chain) - 1:
+                    break                   # този модел го няма — следващият
+                _note_err(last)
                 return None, last
             time.sleep(1.2 + i)
-    return None, last + " (всички модели са заети)"
+    last = last + " (всички модели са заети)"
+    _note_err(last)
+    return None, last
