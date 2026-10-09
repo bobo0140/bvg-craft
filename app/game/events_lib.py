@@ -505,7 +505,9 @@ class Contest(Event):
                     for p in ps]
         out = {}
         for p, (ok, r) in zip(ps, self.s.query_many(cmds)):
-            m = re.search(r"(?:has|count:)\s*(\d+)", r or "") if ok else None
+            # „X has 5 [..]" (scoreboard) или „Test passed. Count: 5" (items)
+            m = re.search(r"(?:\bhas|count:)\s*(\d+)", r or "", re.I) \
+                if ok else None
             out[p] = int(m.group(1)) if m else 0
         return out
 
