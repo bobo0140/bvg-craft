@@ -392,6 +392,38 @@ def gm_plan(names):
     ], "next_in_minutes": 10}
 
 
+def blueprint_match(s, job, limit=500):
+    """Колко от блоковете по чертежа наистина стоят в света."""
+    want = {}
+    for op in job.plan.ops:
+        if op[0] in ("F", "S"):
+            if op[0] == "F":
+                x1, y1, z1, x2, y2, z2 = op[1:7]
+                block = op[7]
+            else:
+                x1, y1, z1 = x2, y2, z2 = op[1:4]
+                block = op[4]
+            name = block.split("[")[0]
+            for x in range(min(x1, x2), max(x1, x2) + 1):
+                for y in range(min(y1, y2), max(y1, y2) + 1):
+                    for z in range(min(z1, z2), max(z1, z2) + 1):
+                        want[(x, y, z)] = name
+    ox, oy, oz = job.origin
+    items = [(k, v) for k, v in want.items() if v != "air"]
+    step = max(1, len(items) // limit)
+    items = items[::step]
+    cmds = []
+    for (x, y, z), name in items:
+        rx, rz = blueprints.rot_xz(x, z, job.rot)
+        cmds.append(f"execute if block {ox + rx} {oy + y} {oz + rz} "
+                    f"{blueprints.ns(name)}")
+    res = s.query_many(cmds)
+    good = sum(1 for ok, r in res if ok and "passed" in (r or "").lower())
+    miss = [c for c, (ok, r) in zip(cmds, res)
+            if not (ok and "passed" in (r or "").lower())][:5]
+    return good / max(1, len(cmds)), len(cmds), miss
+
+
 def players_phase(api, version):
     names = ["BVG", "Ivan_99", "Mia"]
     if not node_supports(version):
@@ -502,6 +534,10 @@ def _players(api, bots, names):
                 f"execute if block {ox} {oy} {oz} "
                 f"minecraft:{blueprints.STYLES['spruce']['found']}")[1].lower()
             check("Селяни", "основата е от правилния камък", ok)
+            ratio, n, miss = blueprint_match(s, job)
+            check("Селяни", f"къщата съвпада с чертежа ({int(ratio * 100)}%"
+                            f" от {n} блока, завъртане {job.rot})",
+                  ratio >= 0.97, miss)
 
     # говорене със селянин
     w0 = br.villages.workers[0] if br.villages.workers else None
@@ -519,6 +555,13 @@ def _players(api, bots, names):
     check("Села", "площадът е построен", ok, br.villages.status())
     if ok:
         v = br.villages.villages[0]
+        b0 = v["buildings"][0]
+        from app.game.villages import Job
+        pj = Job("plaza", v.get("style", "oak"), "medium",
+                 tuple(b0["origin"]), b0["rot"], 0)
+        ratio, n, miss = blueprint_match(s, pj)
+        check("Села", f"площадът съвпада с чертежа ({int(ratio * 100)}%, "
+                      f"завъртане {b0['rot']})", ratio >= 0.97, miss)
         v["next_at"] = 0
         grew = wait(lambda: any(w.get("_job") and w.get("village") == v["id"]
                                 for w in br.villages.workers), 120, 1)
