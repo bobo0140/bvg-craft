@@ -34,16 +34,29 @@ DEFAULTS = {
     # AI
     "ai_provider": "gemini",
     "gemini_key": "",
-    "gemini_model": "gemini-2.5-flash",
+    "gemini_model": "auto",        # auto = сам избира наличен модел
     "openai_key": "",
-    "openai_model": "gpt-4o-mini",
+    "openai_model": "auto",
     "ai_enabled": True,
     "chaos": 2,                    # 0 тихо, 1 леко, 2 весело, 3 хаос
     "director_minutes": 8,         # на колко минути режисьорът мисли за събитие
     "roast_deaths": True,
     "greet_joins": True,
     "characters": {},              # включени/изключени и позиции на героите
+
+    # режисьорът и селата
+    "owner_name": "",              # твоето име в играта
+    "gm_enabled": True,            # AI режисьорът решава какво става
+    "gm_power": "full",            # full = почти всичко; normal = по-кротко
+    "workers_enabled": True,       # селяни, които строят
+    "village_auto": True,          # режисьорът сам основава села
+    "build_cooldown": 15,          # минути между строежи за един играч
 }
+
+# Стойности по подразбиране от стари версии, които вече не работят
+_STALE = {"gemini_model": ("gemini-2.5-flash", "gemini-2.0-flash",
+                           "gemini-2.5-flash-lite", "gemini-1.5-flash", ""),
+          "openai_model": ("gpt-4o-mini", "")}
 
 SECRETS = ("gemini_key", "openai_key", "rcon_password")
 
@@ -65,9 +78,13 @@ class Config:
                 self.data[k] = v
         except (OSError, json.JSONDecodeError):
             pass
+        for k, old in _STALE.items():
+            if self.data.get(k) in old:
+                self.data[k] = "auto"
 
     def save(self):
         with self._lock:
+            os.makedirs(os.path.dirname(paths.CONFIG) or ".", exist_ok=True)
             tmp = paths.CONFIG + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=2)

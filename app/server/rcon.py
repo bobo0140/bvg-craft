@@ -6,6 +6,7 @@ rcon.py — връзка към сървъра за изпращане на ко
 връщат и тръгват отново — така постройка никога не остава наполовина.
 """
 
+import collections
 import queue
 import socket
 import struct
@@ -15,9 +16,34 @@ import time
 from ..logbus import log
 
 T_AUTH, T_CMD = 3, 2
-BAD_WORDS = ("unknown or incomplete", "unknown command", "expected",
-             "invalid", "incorrect argument", "no entity was found",
-             "cannot", "is not allowed", "unable to")
+
+# Командата е написана грешно — това е бъг и трябва да се види
+SYNTAX_WORDS = ("<--[here]", "unknown or incomplete command",
+                "incorrect argument", "unknown item", "unknown block",
+                "unknown entity", "unknown effect", "unknown particle",
+                "malformed", "can't find element", "invalid ",
+                "unknown attribute", "unknown criterion")
+# Командата е вярна, но не е успяла (място извън света, няма място...)
+FAIL_WORDS = ("cannot", "can't", "unable to", "could not", "failed",
+              "is not allowed", "not loaded", "too many blocks",
+              "outside of the world", "is too big")
+# Няма кого да засегне — нормално, не е грешка
+NOBODY = ("no entity was found", "no player was found",
+          "no targets matched", "no entities", "test failed")
+
+
+def classify_reply(reply):
+    """'ok' | 'syntax' | 'fail' — какво значи отговорът на сървъра."""
+    low = (reply or "").lower()
+    if not low:
+        return "ok"
+    if any(w in low for w in SYNTAX_WORDS):
+        return "syntax"
+    if any(w in low for w in NOBODY):
+        return "ok"
+    if any(w in low for w in FAIL_WORDS):
+        return "fail"
+    return "ok"
 
 
 class RconError(Exception):
@@ -114,13 +140,18 @@ class Sender:
         self.last_ok = 0.0          # кога последно има успешен обмен
         self.last_error = ""
         self.fail_streak = 0
+        self.sent = 0
+        # Последните отказани команди: (време, вид, команда, отговор)
+        self.rejected = collections.deque(maxlen=200)
+        self._clock = threading.Lock()
         threading.Thread(target=self._worker, daemon=True).start()
 
     def _client(self):
-        if self.rcon is None:
-            self.rcon = Rcon("127.0.0.1", self.cfg.get("rcon_port"),
-                             self.cfg.get("rcon_password"))
-        return self.rcon
+        with self._clock:
+            if self.rcon is None:
+                self.rcon = Rcon("127.0.0.1", self.cfg.get("rcon_port"),
+                                 self.cfg.get("rcon_password"))
+            return self.rcon
 
     def send(self, command, optional=False):
         """optional=True е украса, която може да отпадне при претоварване."""
@@ -147,18 +178,40 @@ class Sender:
             self.last_error = f"{type(e).__name__}: {e}"
             return False, self.last_error
 
+    def query_many(self, commands):
+        """Много команди с отговор наведнъж: [(успех, отговор), ...]."""
+        commands = [c for c in commands if c]
+        if not commands:
+            return []
+        if not self.enabled:
+            return [(False, "сървърът не върви")] * len(commands)
+        try:
+            res = self._client().run_many(commands)
+            self.last_ok, self.fail_streak = time.time(), 0
+            return [(True, r) for _, r in res]
+        except Exception as e:
+            self._drop()
+            self.last_error = f"{type(e).__name__}: {e}"
+            return [(False, self.last_error)] * len(commands)
+
     def _drop(self):
         if self.rcon:
             self.rcon.close()
         self.rcon = None
 
     def _check(self, cmd, reply):
-        low = (reply or "").lower()
-        if any(w in low for w in BAD_WORDS):
+        self.sent += 1
+        kind = classify_reply(reply)
+        if kind == "ok":
+            return
+        self.rejected.append((time.time(), kind, cmd[:300],
+                              (reply or "").strip()[:300]))
+        if kind == "syntax":
             self.errors += 1
-            if self.errors <= 20:
-                log.warn("RCON", f"Отказано: {cmd.split('{')[0][:70]} — "
-                                 f"{reply.strip()[:140]}")
+            if self.errors <= 30:
+                log.warn("RCON", f"Сървърът не разбра: "
+                                 f"{cmd.split('{')[0][:70]} — "
+                                 f"{reply.strip()[:160]}")
 
     def _worker(self):
         while True:

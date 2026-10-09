@@ -7,6 +7,7 @@ api.py — това, което интерфейсът може да вика.
 """
 
 import ipaddress
+import json
 import os
 import re
 import subprocess
@@ -17,11 +18,12 @@ import time
 from . import paths
 from .ai import brain as brain_mod, characters, providers
 from .config import Config
-from .game import events_lib, guide, world
+from .game import blueprints, events_lib, guide, world
 from .logbus import log
 from .server import manager, worldio
 from .server.monitor import Monitor
-from .server.rcon import Sender
+from .server.rcon import Sender, classify_reply
+from .version import BUILT, VERSION
 
 
 def _bg(fn, *args):
@@ -59,8 +61,6 @@ class _Capture:
         self.cmds.extend(commands)
 
 
-_ERR = ("unknown", "expected", "invalid", "incorrect", "unable", "cannot",
-        "failed", "not loaded", "error", "no such")
 
 
 class Api:
@@ -160,6 +160,17 @@ class Api:
             "events": [{"key": k, "title": c.title,
                         "min_players": c.min_players}
                        for k, c in events_lib.LIBRARY.items()],
+            "contests": [{"key": k, "title": v["title"], "desc": v["desc"]}
+                         for k, v in events_lib.CONTESTS.items()],
+            "gm": self._gm_status(),
+            "villages": self._brain.villages.status(),
+            "kinds": [{"key": k, "name": n} for k, n in
+                      blueprints.KIND_NAMES.items() if k != "plaza"],
+            "styles": [{"key": k, "name": n} for k, n in
+                       blueprints.STYLE_NAMES.items()],
+            "owner": self._cfg.get("owner_name") or "",
+            "version": VERSION, "built": BUILT,
+            "rejected": len(self._sender.rejected),
         }
 
     def _roster(self):
@@ -235,10 +246,27 @@ class Api:
 
     def _ai_status(self):
         st = providers.STATS
+        ms = providers.model_status(self._cfg)
         return {"ok": st["ok"], "err": st["err"], "busy": st["busy"],
                 "last_error": st["last_error"],
                 "last_ok_ago": int(time.time() - st["last_ok"])
-                if st["last_ok"] else None}
+                if st["last_ok"] else None,
+                "model": ms["working"], "models": ms["models"],
+                "chosen": ms["chosen"], "unavailable": ms["unavailable"],
+                "list_error": ms["list_error"]}
+
+    def _gm_status(self):
+        d = self._brain.director
+        now = time.time()
+        return {"enabled": bool(self._cfg.get("gm_enabled", True)),
+                "busy": d.busy,
+                "next_in": max(0, int(d.next_at - now))
+                if self._server.ready else None,
+                "source": d.last_source,
+                "decisions": [{"ago": int(now - t), "text": text,
+                               "source": src, "done": done}
+                              for t, text, src, done in
+                              list(d.decisions)[-6:]][::-1]}
 
     def logs(self, since=0):
         return log.since(int(since or 0))
@@ -247,7 +275,11 @@ class Api:
 
     def save(self, values):
         try:
-            self._cfg.update(values or {})
+            values = values or {}
+            self._cfg.update(values)
+            if any(values.get(k) for k in ("gemini_key", "openai_key")) or \
+                    "ai_provider" in values:
+                providers.forget_models()
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -439,6 +471,8 @@ class Api:
                         self._cfg.set("whitelist", wl + added)
                         manager.write_whitelist(
                             wl + added, offline=self._cfg.get("offline_mode"))
+                if res.get("ok"):
+                    self._brain.villages.reset()
                 if res.get("ok") and self._cfg.get("characters"):
                     # Местата на духовете са от стария свят — там може да
                     # има планина или море. Призовават се наново.
@@ -529,6 +563,10 @@ class Api:
         return {"ok": True}
 
     def test_ai(self):
+        prov = self._cfg.get("ai_provider") or "gemini"
+        key = self._cfg.get("gemini_key" if prov == "gemini" else "openai_key")
+        if key:
+            providers.list_models(prov, key, refresh=True)
         reply, err = providers.ask(
             self._cfg, characters.system_prompt("keeper"),
             [{"role": "user", "content": "Кажи едно кратко изречение за "
@@ -536,7 +574,187 @@ class Api:
             force=True)
         if err:
             return {"ok": False, "error": err}
-        return {"ok": True, "say": reply.get("say", "")}
+        return {"ok": True, "say": reply.get("say", ""),
+                "model": providers.STATS.get("model", "")}
+
+    def ai_models(self, refresh=False):
+        prov = self._cfg.get("ai_provider") or "gemini"
+        key = self._cfg.get("gemini_key" if prov == "gemini" else "openai_key")
+        models, err = providers.list_models(prov, key, refresh=bool(refresh))
+        st = providers.model_status(self._cfg)
+        return {"ok": bool(models), "models": models, "error": err,
+                "working": st["working"], "chosen": st["chosen"]}
+
+    # ---------- режисьор, състезания, села ----------
+
+    def gm_now(self, instruction=""):
+        if not self._server.ready:
+            return {"ok": False, "error": "Сървърът не е готов."}
+        if not self._server.online:
+            return {"ok": False, "error": "Няма никой в света."}
+        owner = self._cfg.get("owner_name") or None
+        ok, msg = self._brain.director.think(
+            "собственикът натисна бутона", instruction=(instruction or "")
+            .strip() or None, admin=owner)
+        return {"ok": ok, "message": msg if ok else None,
+                "error": None if ok else msg}
+
+    def contest(self, key):
+        if not self._server.ready:
+            return {"ok": False, "error": "Сървърът не е готов."}
+        ok, msg = self._brain.start_event(key, source="ръчно")
+        return {"ok": ok, "message": msg if ok else None,
+                "error": None if ok else msg}
+
+    def village_found(self, player):
+        if not self._server.ready:
+            return {"ok": False, "error": "Сървърът не е готов."}
+        self._brain._refresh_positions()
+        ok, msg = self._brain.villages.found_village(player)
+        return {"ok": ok, "message": msg if ok else None,
+                "error": None if ok else msg}
+
+    def village_build(self, player, kind="house", style="", size="medium"):
+        if not self._server.ready:
+            return {"ok": False, "error": "Сървърът не е готов."}
+        self._brain._refresh_positions()
+        ok, msg = self._brain.villages.request_build(
+            player, kind, style or None, size or None,
+            owner=self._cfg.get("owner_name") or "собственика")
+        return {"ok": ok, "message": msg if ok else None,
+                "error": None if ok else msg}
+
+    def worker_stop(self, wid):
+        ok = self._brain.villages.stop_worker(int(wid))
+        return {"ok": ok, "message": "Спря да строи." if ok else None}
+
+    def worker_remove(self, wid):
+        ok = self._brain.villages.remove_worker(int(wid))
+        return {"ok": ok, "message": "Селянинът си тръгна." if ok else None}
+
+    def villages_reset(self):
+        for w in list(self._brain.villages.workers):
+            self._brain.villages.remove_worker(w["id"])
+        self._brain.villages.reset()
+        return {"ok": True, "message": "Селата са забравени. Постройките "
+                                       "остават в света."}
+
+    # ---------- конзола: бързи действия ----------
+
+    QUICK = {
+        "op": "op {p}", "deop": "deop {p}",
+        "creative": "gamemode creative {p}", "survival": "gamemode survival {p}",
+        "spectator": "gamemode spectator {p}",
+        "heal": "effect give {p} minecraft:instant_health 1 10 true",
+        "feed": "effect give {p} minecraft:saturation 5 10 true",
+        "tp_me": "tp {p} {owner}", "tp_to": "tp {owner} {p}",
+        "kick": "kick {p} Изгонен от собственика",
+        "day": "time set 1000", "night": "time set 13000",
+        "clear": "weather clear 1200", "rain": "weather rain 1200",
+        "save": "save-all", "list": "list",
+        "peaceful": "difficulty peaceful", "normal": "difficulty normal",
+        "keepinv_on": "gamerule keepInventory true",
+        "keepinv_off": "gamerule keepInventory false",
+    }
+
+    def set_owner(self, name):
+        name = (name or "").strip()
+        if name and not re.fullmatch(r"[A-Za-z0-9_]{1,16}", name):
+            return {"ok": False, "error": "Името е до 16 знака: латински "
+                                          "букви, цифри и _."}
+        self._cfg.set("owner_name", name)
+        if name:
+            admins = list(self._cfg.get("admins") or [])
+            if name not in admins:
+                admins.append(name)
+                self._cfg.set("admins", admins)
+                manager.write_ops(admins, offline=self._cfg.get("offline_mode"))
+            wl = list(self._cfg.get("whitelist") or [])
+            if name not in wl:
+                wl.append(name)
+                self._cfg.set("whitelist", wl)
+                self._apply_whitelist()
+            if self._server.running:
+                self._server.command(f"op {name}")
+        return {"ok": True, "message": f"Ти си {name}. Имаш OP." if name
+                else "Името е изчистено."}
+
+    def quick(self, action, player=""):
+        if not self._server.running:
+            return {"ok": False, "error": "Сървърът не върви."}
+        tpl = self.QUICK.get(action)
+        if not tpl:
+            return {"ok": False, "error": "Непознато действие."}
+        owner = self._cfg.get("owner_name") or ""
+        if "{p}" in tpl and not re.fullmatch(r"[A-Za-z0-9_]{1,16}",
+                                             player or ""):
+            return {"ok": False, "error": "Избери играч."}
+        if "{owner}" in tpl and not owner:
+            return {"ok": False, "error": "Първо запиши твоето име в "
+                                          "раздел Играчи."}
+        if action in ("op", "deop"):
+            want = action == "op"
+            if (player in (self._cfg.get("admins") or [])) != want:
+                self.toggle_admin(player)        # пази и списъка с админи
+            else:
+                self._server.command(f"{action} {player}")
+            return {"ok": True, "message": f"{player}: OP "
+                    f"{'даден' if want else 'махнат'}."}
+        cmd = tpl.format(p=player, owner=owner)
+        self._server.command(cmd)
+        log.info("Конзола", f"> {cmd}")
+        return {"ok": True, "message": f"Изпратено: {cmd}"}
+
+    # ---------- отчет ----------
+
+    def export_report(self):
+        """Текстов файл с всичко нужно, за да се намери проблем."""
+        lines = [f"BVG Craft {VERSION} {BUILT}",
+                 f"Създаден: {time.strftime('%d.%m.%Y %H:%M:%S')}", ""]
+        try:
+            st = self._build_state()
+            lines += ["== Състояние ==",
+                      f"Paper: {st['paper']} ({st['mc_version']}), Java "
+                      f"{st['java']} (трябва {st['java_needed']})",
+                      f"Върви: {st['running']}, готов: {st['ready']}, "
+                      f"онлайн: {', '.join(st['online']) or '—'}"]
+            for h in st["health"]:
+                lines.append(f"  {h['name']}: {h['ok']} — {h['detail']}")
+            ai = st["ai"]
+            lines += ["", "== AI ==",
+                      f"доставчик: {self._cfg.get('ai_provider')}, избран "
+                      f"модел: {ai['chosen']}, отговаря: {ai['model'] or '—'}",
+                      f"налични: {', '.join(ai['models'][:12]) or '—'}",
+                      f"недостъпни: {', '.join(ai['unavailable']) or '—'}",
+                      f"успешни {ai['ok']}, грешки {ai['err']}, "
+                      f"последна грешка: {ai['last_error'] or '—'}",
+                      "", "== Режисьор =="]
+            for d in st["gm"]["decisions"]:
+                lines.append(f"  преди {d['ago']} сек ({d['source']}): "
+                             f"{d['text']} -> {', '.join(d['done'])}")
+            lines += ["", "== Села ==",
+                      json.dumps(st["villages"], ensure_ascii=False)[:2000]]
+        except Exception as e:
+            lines.append(f"Състоянието не се събра: {e}")
+        lines += ["", "== Отказани от сървъра команди =="]
+        for t, kind, cmd, reply in list(self._sender.rejected)[-60:]:
+            lines.append(f"[{time.strftime('%H:%M:%S', time.localtime(t))}] "
+                         f"{kind}: {cmd[:200]}\n    -> {reply[:200]}")
+        cfg = dict(self._cfg.public())
+        lines += ["", "== Настройки (без ключове) ==",
+                  json.dumps({k: v for k, v in cfg.items()
+                              if not k.endswith("_key")}, ensure_ascii=False,
+                             indent=1)[:4000]]
+        lines += ["", "== Лог (последните 800 реда) =="]
+        for e in log.since(0, limit=100000)[-800:]:
+            lines.append(f"{e['t']} [{e['level']}] [{e['src']}] {e['msg']}")
+        os.makedirs(paths.DATA, exist_ok=True)
+        path = os.path.join(paths.DATA, f"otchet-{time.strftime('%Y%m%d-%H%M%S')}.txt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+        self.open_folder("data")
+        return {"ok": True, "path": path,
+                "message": "Отчетът е запазен в папка data. Прати ми го."}
 
     # ---------- пълна проверка ----------
 
@@ -639,12 +857,36 @@ class Api:
             ("Частици", "particle minecraft:reverse_portal ~ ~1 ~ 3 2 3 "
                         "0.05 20"),
         ]
+        probes += [
+            ("Таймер на екрана (боссбар)", "bossbar add bvg:probe "
+             '{"text":"проба"}'),
+            ("Махане на таймера", "bossbar remove bvg:probe"),
+            ("Класация (scoreboard)", "scoreboard objectives add bvgprobe "
+             'minecraft.custom:minecraft.jump {"text":"проба"}'),
+            ("Махане на класацията", "scoreboard objectives remove bvgprobe"),
+            ("Брояч на предмети", "execute if items entity @a[tag=bvg_none] "
+             "container.* minecraft:diamond"),
+            ("Брояч на дървета (таг)", "execute if items entity "
+             "@a[tag=bvg_none] container.* #minecraft:logs"),
+            ("Награда с фойерверк", "execute at @a[tag=bvg_none] run summon "
+             "firework_rocket ~ ~1 ~ {LifeTime:25,FireworksItem:{id:"
+             '"minecraft:firework_rocket",count:1,components:{'
+             '"minecraft:fireworks":{flight_duration:1,explosions:[{shape:'
+             '"large_ball",colors:[I;16711680],has_twinkle:true}]}}}}'),
+            ("Височина на земята", "execute positioned 0.5 0 0.5 positioned "
+             "over motion_blocking_no_leaves run summon marker ~ ~ ~ "
+             '{Tags:["bvg_probe"]}'),
+            ("Празно място за строеж", "execute if blocks 0 300 0 2 302 2 "
+             "0 310 0 all"),
+            ("Чистене на трева", "fill 0 310 0 1 311 1 minecraft:air replace "
+             "#minecraft:small_flowers"),
+        ]
         for label, command in probes:
             if not command:
                 add(label, False, "Не успях да сглобя командата.")
                 continue
             ok, reply = snd.query(command)
-            bad = (not ok) or any(w in (reply or "").lower() for w in _ERR)
+            bad = (not ok) or classify_reply(reply) == "syntax"
             add(label, not bad, (reply or "")[:160] if bad else "")
 
         ok, reply = snd.query("execute if entity @e[tag=bvg_probe]")

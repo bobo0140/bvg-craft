@@ -1,0 +1,87 @@
+name: Real server test
+
+# Пуска истински Paper сървър с ботове-играчи и проверява всичко,
+# което приложението прави. Отчетът отива в release „ci-report".
+on:
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: realtest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        mc: ["1.21.11", "26.1", "latest"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install
+        run: |
+          pip install -r requirements.txt || pip install requests
+          cd tests/real && npm install --no-audit --no-fund
+
+      - name: Run against a real server
+        id: run
+        continue-on-error: true
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUNBUFFERED: "1"
+        run: python tests/real/run_real.py --mc "${{ matrix.mc }}" --out "report-${{ matrix.mc }}"
+
+      - name: Summary
+        if: always()
+        run: cat "report-${{ matrix.mc }}.md" >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: report-${{ matrix.mc }}
+          path: report-${{ matrix.mc }}.*
+          retention-days: 3
+
+      - name: Fail if the test failed
+        if: steps.run.outcome == 'failure'
+        run: exit 1
+
+  publish:
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: reports
+          merge-multiple: true
+      - name: Publish reports
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ls -la reports
+          gh release view ci-report -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create ci-report -R "$GITHUB_REPOSITORY" --prerelease \
+              --title "Тестове на истински сървър" --notes "Автоматичен отчет." --target "$GITHUB_SHA"
+          echo "${GITHUB_SHA} ${GITHUB_REF_NAME} run ${GITHUB_RUN_NUMBER}" > reports/commit.txt
+          gh release upload ci-report reports/* -R "$GITHUB_REPOSITORY" --clobber

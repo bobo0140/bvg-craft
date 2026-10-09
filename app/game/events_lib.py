@@ -8,6 +8,7 @@ events_lib.py — събитията на сървъра.
 
 import math
 import random
+import re
 import time
 
 from ..ai.characters import CHARACTERS
@@ -165,10 +166,23 @@ class Treasure(Event):
             self.done = True
             return
         ang = random.uniform(0, math.tau)
-        dist = random.randint(60, 130)
+        dist = random.randint(50, 110)
         self.x = int(pos[0] + math.cos(ang) * dist)
         self.z = int(pos[2] + math.sin(ang) * dist)
         self.last_hint = 0
+        self.chest = None
+        try:
+            y = world.surfaces(self.s, [(self.x, self.z)])[0]
+        except Exception:
+            y = None
+        if y is not None and -60 < y < 300:
+            loot = random.sample(REWARD_BIG + REWARD_SMALL, 4)
+            items = ",".join(
+                f'{{Slot:{i * 2}b,id:"minecraft:{it.split()[0]}",'
+                f'count:{int(it.split()[1])}}}' for i, it in enumerate(loot))
+            self.chest = (self.x, y + 1, self.z)
+            self.s.send(f"setblock {self.x} {y + 1} {self.z} "
+                        f"minecraft:chest[facing=north]{{Items:[{items}]}}")
         world.announce(self.s, "💎 СЪКРОВИЩЕ", "Някъде наблизо е скрито...")
         world.say(self.s, "keeper",
                   "Зарових сандък. Ще ви казвам кой е топъл и кой студен.")
@@ -200,10 +214,11 @@ class Treasure(Event):
 
     def finish(self, winner):
         if winner:
-            for r in REWARD_BIG:
-                give(self.s, winner, r)
-            world.announce(self.s, f"💎 {winner} намери съкровището!", "",
-                           "aqua")
+            if not self.chest:
+                for r in REWARD_BIG:
+                    give(self.s, winner, r)
+            world.announce(self.s, f"💎 {winner} намери съкровището!",
+                           "Сандъкът е твой" if self.chest else "", "aqua")
         else:
             world.say(self.s, "keeper", "Никой не го намери. Остава заровено "
                                         "завинаги... или до следващия път.")
@@ -217,7 +232,7 @@ class NightOfTheDead(Event):
 
     def start(self):
         self.dead = set()
-        self.s.send("time set midnight")
+        self.s.send("time set 18000")          # полунощ (26.x няма „midnight")
         self.s.send("weather thunder 200")
         per = 2 + self.e.cfg.get("chaos")
         for p in self.players():
@@ -239,7 +254,7 @@ class NightOfTheDead(Event):
         for p in survivors:
             give(self.s, p, random.choice(REWARD_SMALL))
         self.s.send("kill @e[tag=bvg_undead]")
-        self.s.send("time set day")
+        self.s.send("time set 1000")
         self.s.send("weather clear")
         world.say(self.s, "keeper",
                   ("Оцелели: " + ", ".join(survivors)) if survivors
@@ -414,6 +429,175 @@ class Race(Event):
         self.done = True
 
 
+class Contest(Event):
+    """Състезание с класация отстрани на екрана.
+
+    kind="score": брои по статистика на играта (изкопани, убити,
+    скокове...) през scoreboard. kind="items": брои колко от даден
+    предмет е събрал играчът от началото насам.
+    """
+    key = "contest"
+    title = "СЪСТЕЗАНИЕ"
+    OBJ = "bvgq"
+    CRIT = re.compile(r"^minecraft\.(mined|killed|crafted|used|broken|"
+                      r"picked_up|dropped|killed_by|custom):minecraft\."
+                      r"[a-z0-9_]+$")
+    ITEM = re.compile(r"^#?(?:minecraft:)?[a-z0-9_]+$")
+
+    def __init__(self, engine, kind="score", criterion=None, item=None,
+                 amount=10, minutes=5, title=None, desc=None, reward=None,
+                 xp=60, preset=None):
+        super().__init__(engine)
+        self.kind = "items" if kind == "items" else "score"
+        self.criterion = (criterion or "").strip()
+        self.item = (item or "").strip().lower()
+        if self.item and not self.item.startswith("#") and \
+                ":" not in self.item:
+            self.item = "minecraft:" + self.item
+        self.amount = max(1, min(int(amount or 10), 100000))
+        self.duration = max(60, min(int(float(minutes or 5) * 60), 1800))
+        self.title = (title or "СЪСТЕЗАНИЕ")[:40]
+        self.desc = (desc or "")[:80]
+        self.reward = [r for r in (reward or ["diamond 2"])][:4]
+        self.xp = max(0, min(int(xp or 0), 500))
+        self.preset = preset
+        self.base = {}
+        self.scores = {}
+        self.next_poll = 0
+        self.error = None
+
+    def valid(self):
+        if self.kind == "score":
+            return bool(self.CRIT.match(self.criterion))
+        return bool(self.ITEM.match(self.item))
+
+    def start(self):
+        if not self.valid():
+            self.error = "неразбираемо състезание"
+            self.done = True
+            return
+        if self.kind == "score":
+            res = self.s.query_many([
+                f"scoreboard objectives remove {self.OBJ}",
+                f"scoreboard objectives add {self.OBJ} {self.criterion} "
+                f'{{"text":"{world.esc(self.title)}","color":"gold"}}',
+                f"scoreboard objectives setdisplay sidebar {self.OBJ}"])
+            from ..server.rcon import classify_reply
+            if len(res) < 2 or not res[1][0] or \
+                    classify_reply(res[1][1]) != "ok":
+                self.error = (res[1][1] if len(res) > 1 else "")[:120]
+                self.done = True
+                return
+        else:
+            self.base = self._counts()
+        world.announce(self.s, "🏆 " + self.title,
+                       self.desc or f"Първият до {self.amount} печели", "gold")
+        world.say(self.s, "keeper",
+                  f"Състезание: {self.desc or self.title}. Първият до "
+                  f"{self.amount} печели! Имате {self.duration // 60} мин.")
+
+    def _counts(self):
+        ps = self.players()
+        if self.kind == "score":
+            cmds = [f"scoreboard players get {p} {self.OBJ}" for p in ps]
+        else:
+            cmds = [f"execute if items entity {p} container.* {self.item}"
+                    for p in ps]
+        out = {}
+        for p, (ok, r) in zip(ps, self.s.query_many(cmds)):
+            m = re.search(r"(?:has|count:)\s*(\d+)", r or "") if ok else None
+            out[p] = int(m.group(1)) if m else 0
+        return out
+
+    def tick(self):
+        if self.done or time.time() < self.next_poll:
+            return
+        self.next_poll = time.time() + 4
+        now = self._counts()
+        if self.kind == "items":
+            now = {p: max(0, v - self.base.setdefault(p, v))
+                   for p, v in now.items()}
+        self.scores.update(now)
+        if self.scores:
+            lead, val = max(self.scores.items(), key=lambda kv: kv[1])
+            if val >= self.amount:
+                self.finish(lead)
+                return
+            if self.kind == "items":
+                for p in self.players():
+                    world.actionbar(self.s, p, f"{self.title}: ти {now.get(p, 0)}"
+                                    f"/{self.amount} · води {lead} ({val})",
+                                    "gold")
+        if time.time() - self.started > self.duration:
+            best = max(self.scores.items(), key=lambda kv: kv[1],
+                       default=(None, 0))
+            self.finish(best[0] if best[1] > 0 else None)
+
+    def finish(self, winner):
+        if self.done:
+            return
+        self.done = True
+        if self.kind == "score":
+            self.s.send(f"scoreboard objectives remove {self.OBJ}")
+        if winner:
+            world.reward(self.s, winner, self.reward, self.xp,
+                         title="🏆 ПОБЕДА!", reason=self.title)
+            world.announce(self.s, f"🏆 {winner} спечели!", self.title,
+                           "gold")
+            self.e.won(winner, self.title)
+        else:
+            world.say(self.s, "keeper", f"„{self.title}“ свърши без "
+                                        f"победител. Следващия път!")
+
+    def standings(self):
+        return sorted(self.scores.items(), key=lambda kv: -kv[1])[:5]
+
+
+# Готови състезания — за режисьора без AI, за таблото и за !състезание
+CONTESTS = {
+    "jumps": dict(kind="score", criterion="minecraft.custom:minecraft.jump",
+                  amount=150, minutes=3, title="Скачачи",
+                  desc="Най-много скокове за 3 минути",
+                  reward=["emerald 4", "cake 1"]),
+    "diamonds": dict(kind="items", item="minecraft:diamond", amount=3,
+                     minutes=12, title="Диамантена треска",
+                     desc="Първият с 3 нови диаманта",
+                     reward=["diamond 3", "golden_apple 2"], xp=120),
+    "wood": dict(kind="items", item="#minecraft:logs", amount=48, minutes=6,
+                 title="Дървосекачи", desc="Първият с 48 дървени трупа",
+                 reward=["iron_axe 1", "iron_ingot 8"]),
+    "zombies": dict(kind="score",
+                    criterion="minecraft.killed:minecraft.zombie", amount=5,
+                    minutes=8, title="Лов на зомбита",
+                    desc="Първият с 5 убити зомбита",
+                    reward=["diamond 2", "golden_apple 1"], xp=100),
+    "miner": dict(kind="score", criterion="minecraft.mined:minecraft.stone",
+                  amount=64, minutes=5, title="Миньори",
+                  desc="Първият с 64 изкопан камък",
+                  reward=["iron_pickaxe 1", "torch 32"]),
+    "fishing": dict(kind="score",
+                    criterion="minecraft.custom:minecraft.fish_caught",
+                    amount=3, minutes=7, title="Рибари",
+                    desc="Първият с 3 улова",
+                    reward=["emerald 6", "cooked_salmon 8"]),
+    "farmer": dict(kind="score", criterion="minecraft.mined:minecraft.wheat",
+                   amount=24, minutes=6, title="Жътва",
+                   desc="Първият с 24 ожънати жита",
+                   reward=["bread 16", "emerald 4"]),
+    "breeder": dict(kind="score",
+                    criterion="minecraft.custom:minecraft.animals_bred",
+                    amount=4, minutes=6, title="Фермери",
+                    desc="Първият развъдил 4 животни",
+                    reward=["golden_carrot 8", "emerald 4"]),
+    "runner": dict(kind="score",
+                   criterion="minecraft.custom:minecraft.sprint_one_cm",
+                   amount=40000, minutes=4, title="Спринт",
+                   desc="Най-много спринт (в сантиметри)",
+                   reward=["feather 8", "emerald 4"]),
+}
+CONTEST_NAMES = {k: v["title"] for k, v in CONTESTS.items()}
+
+
 LIBRARY = {cls.key: cls for cls in (MeteorShower, Bounty, Treasure,
                                     NightOfTheDead, LowGravity, ChickenRain,
                                     Giant, Riddle, Race)}
@@ -426,12 +610,65 @@ WEIGHT = {"chickens": 0, "gravity": 0, "riddle": 0, "meteors": 1,
 class Engine:
     """Пуска по едно събитие наведнъж и ги кара да вървят."""
 
-    def __init__(self, sender, cfg, online_fn):
+    BAR = "bvg:event"
+
+    def __init__(self, sender, cfg, online_fn, on_win=None):
         self.sender = sender
         self.cfg = cfg
         self.online = online_fn
+        self.on_win = on_win
         self.active = None
         self.history = []
+        self.last_result = None
+        self._bar = False
+
+    def won(self, player, title):
+        self.last_result = (time.time(), player, title)
+        if self.on_win:
+            try:
+                self.on_win(player, title)
+            except Exception:
+                pass
+
+    def _bar_show(self, ev):
+        self.sender.send(f"bossbar remove {self.BAR}")
+        self.sender.send(f'bossbar add {self.BAR} {{"text":"'
+                         f'{world.esc(ev.title)}","color":"gold"}}')
+        self.sender.send(f"bossbar set {self.BAR} color yellow")
+        self.sender.send(f"bossbar set {self.BAR} max {int(ev.duration)}")
+        self.sender.send(f"bossbar set {self.BAR} value {int(ev.duration)}")
+        self.sender.send(f"bossbar set {self.BAR} players @a")
+        self._bar = True
+
+    def _bar_hide(self):
+        if self._bar:
+            self.sender.send(f"bossbar remove {self.BAR}")
+            self._bar = False
+
+    def start_contest(self, preset=None, **kw):
+        """Готово (preset) или измислено от режисьора състезание."""
+        params = dict(CONTESTS.get(preset, {})) if preset else {}
+        params.update({k: v for k, v in kw.items() if v is not None})
+        if self.active and not self.active.done:
+            return False, f"вече върви {self.active.title}"
+        ev = Contest(self, preset=preset, **params)
+        if not ev.valid():
+            return False, "неразбираемо състезание"
+        return self._run(ev, "contest")
+
+    def _run(self, ev, key):
+        try:
+            self.active = ev
+            ev.start()
+        except Exception as e:
+            self.active = None
+            return False, f"грешка при старта ({type(e).__name__}: {e})"
+        if ev.done:
+            self.active = None
+            return False, getattr(ev, "error", None) or "не тръгна"
+        self.history.append((time.time(), key))
+        self._bar_show(ev)
+        return True, ev.title
 
     def can_start(self, key):
         cls = LIBRARY.get(key)
@@ -449,36 +686,43 @@ class Engine:
             return False, why
         try:
             ev = LIBRARY[key](self, **kw) if kw else LIBRARY[key](self)
-            self.active = ev
-            ev.start()
         except Exception as e:
-            self.active = None
             return False, f"грешка при старта ({type(e).__name__}: {e})"
-        self.history.append((time.time(), key))
-        return True, ev.title
+        return self._run(ev, key)
 
     def stop(self):
         if self.active and not self.active.done:
-            self.active.finish(None)
+            try:
+                self.active.finish(None)
+            except Exception:
+                self.active.done = True
         self.active = None
+        self._bar_hide()
 
     def tick(self):
         a = self.active
         if not a:
+            self._bar_hide()
             return
         if a.done:
             self.active = None
+            self._bar_hide()
             return
         if not self.online():
             a.done = True            # всички излязоха — няма за кого
             self.active = None
+            self._bar_hide()
             return
+        left = max(0, int(a.duration - (time.time() - a.started)))
+        self.sender.send(f"bossbar set {self.BAR} value {left}",
+                         optional=True)
         try:
             a.tick()
         except Exception as e:
             # Едно счупено събитие не бива да спамва лога на всеки 2 сек
             a.done = True
             self.active = None
+            self._bar_hide()
             raise RuntimeError(f"Събитието „{a.title}“ спря: "
                                f"{type(e).__name__}: {e}") from e
 
@@ -502,6 +746,10 @@ class Engine:
         if self.active and not self.active.done:
             left = int(self.active.duration
                        - (time.time() - self.active.started))
-            return {"key": self.active.key, "title": self.active.title,
-                    "left": max(0, left)}
+            out = {"key": self.active.key, "title": self.active.title,
+                   "left": max(0, left)}
+            if isinstance(self.active, Contest):
+                out["standings"] = self.active.standings()
+                out["amount"] = self.active.amount
+            return out
         return None
