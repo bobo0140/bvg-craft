@@ -7,8 +7,11 @@ const readline = require("readline");
 
 if (process.argv[2] === "check") {
   const want = process.argv[3];
-  const ok = (mineflayer.testedVersions || []).includes(want) ||
-    require("minecraft-data").versionsByMinecraftVersion.pc[want] !== undefined;
+  let ok = false;
+  try {
+    const data = require("minecraft-data")(want);
+    ok = !!(data && data.version && data.blocksByName && data.protocol);
+  } catch (e) { ok = false; }
   console.log(ok ? "yes" : "no");
   process.exit(0);
 }

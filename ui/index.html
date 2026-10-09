@@ -19,8 +19,10 @@
     </div>
     <button class="nav is-active" data-view="home">Табло</button>
     <button class="nav" data-view="server">Сървър</button>
+    <button class="nav" data-view="console">Конзола</button>
     <button class="nav" data-view="players">Играчи</button>
     <button class="nav" data-view="spirits">Духовете</button>
+    <button class="nav" data-view="villages">Села</button>
     <button class="nav" data-view="events">Събития</button>
     <button class="nav" data-view="ai">Изкуствен разум</button>
     <button class="nav" data-view="log">Лог</button>
@@ -31,6 +33,7 @@
         <span id="powerText">Спрян</span>
       </div>
       <button class="btn btn-primary" id="powerBtn">Пусни сървъра</button>
+      <span class="version" id="version"></span>
     </div>
   </nav>
 
@@ -58,6 +61,21 @@
           <div id="eventNow" class="event-now"><p class="empty">Нищо не върви в момента.</p></div>
           <button class="btn btn-ghost" id="randomEvent">Изненадай ги</button>
         </div>
+      </div>
+
+      <div class="panel gm">
+        <div class="gm-head">
+          <div>
+            <h2>Режисьорът</h2>
+            <p class="lede small" id="gmNext">Изкуственият разум гледа света и решава какво да се случи.</p>
+          </div>
+          <button class="btn" id="gmNow">Нека реши сега</button>
+        </div>
+        <form class="inline gm-ask" id="gmAsk" autocomplete="off">
+          <input id="gmText" placeholder="Задача за режисьора, напр. „направи арена за бой до мен“">
+          <button class="btn" type="submit">Изпълни</button>
+        </form>
+        <ul class="gm-list" id="gmList"></ul>
       </div>
 
       <div class="panel diag">
@@ -164,13 +182,46 @@
         </div>
       </form>
 
-      <div class="panel console">
-        <h2>Конзола</h2>
-        <form id="consoleForm" class="inline">
-          <input id="consoleInput" placeholder="say здравейте" autocomplete="off">
-          <button class="btn" type="submit">Изпрати</button>
-        </form>
+    </section>
+
+    <!-- КОНЗОЛА -->
+    <section class="view" id="view-console">
+      <header class="view-head">
+        <h1>Конзола</h1>
+        <p class="lede">Команди направо към сървъра. OP и честите неща — с един бутон.</p>
+      </header>
+      <div class="panel quick">
+        <div class="quick-row">
+          <select id="qPlayer" aria-label="Играч"></select>
+          <button class="btn btn-sm" data-q="op">Дай OP</button>
+          <button class="btn btn-sm" data-q="deop">Махни OP</button>
+          <button class="btn btn-sm" data-q="creative">Творчески</button>
+          <button class="btn btn-sm" data-q="survival">Оцеляване</button>
+          <button class="btn btn-sm" data-q="spectator">Наблюдател</button>
+          <button class="btn btn-sm" data-q="tp_me">Доведи при мен</button>
+          <button class="btn btn-sm" data-q="tp_to">Отиди при него</button>
+          <button class="btn btn-sm" data-q="heal">Излекувай</button>
+          <button class="btn btn-sm" data-q="feed">Нахрани</button>
+          <button class="btn btn-sm btn-danger" data-q="kick">Изгони</button>
+        </div>
+        <div class="quick-row">
+          <button class="btn btn-sm" data-q="day">Ден</button>
+          <button class="btn btn-sm" data-q="night">Нощ</button>
+          <button class="btn btn-sm" data-q="clear">Ясно</button>
+          <button class="btn btn-sm" data-q="rain">Дъжд</button>
+          <button class="btn btn-sm" data-q="keepinv_on">Пазене на инвентара</button>
+          <button class="btn btn-sm" data-q="keepinv_off">Без пазене</button>
+          <button class="btn btn-sm" data-q="save">Запази света</button>
+          <button class="btn btn-sm" data-q="list">Кой е вътре</button>
+        </div>
       </div>
+      <div class="term" id="term" role="log" aria-live="polite"></div>
+      <form id="consoleForm" class="term-input" autocomplete="off">
+        <span aria-hidden="true">&gt;</span>
+        <input id="consoleInput" placeholder="напр. give BVG diamond 5" spellcheck="false">
+        <button class="btn" type="submit">Изпрати</button>
+      </form>
+      <p class="hint">↑ и ↓ връщат предишните команди. Наклонена черта не трябва. От играта — напиши <b>!помощ</b> в чата.</p>
     </section>
 
     <!-- ИГРАЧИ -->
@@ -179,6 +230,11 @@
         <h1>Играчи</h1>
         <p class="lede">Влизат само хората от този списък. IP адресите виждаш само ти — в играта не се показват.</p>
       </header>
+      <form class="inline owner" id="ownerForm" autocomplete="off">
+        <label for="ownerName">Твоето име в играта</label>
+        <input id="ownerName" placeholder="напр. BVG" maxlength="16">
+        <button class="btn" type="submit">Запази и дай ми OP</button>
+      </form>
       <form class="inline add-player" id="addPlayer">
         <input id="newPlayer" placeholder="Име в играта" maxlength="16" autocomplete="off">
         <button class="btn btn-primary" type="submit">Добави</button>
@@ -196,12 +252,54 @@
       <div class="spirits" id="spirits"></div>
     </section>
 
+    <!-- СЕЛА -->
+    <section class="view" id="view-villages">
+      <header class="view-head">
+        <h1>Села</h1>
+        <p class="lede">Селяните строят блок по блок, само на равно, сухо и празно място — никога върху чужда постройка, дърво или вода. Селата растат сами, докато някой е наблизо.</p>
+      </header>
+      <div class="panel build">
+        <div class="build-row">
+          <label for="bPlayer">До кого</label>
+          <select id="bPlayer"></select>
+          <button class="btn btn-primary" id="bVillage">Ново село тук</button>
+        </div>
+        <div class="build-row">
+          <label for="bKind">Постройка</label>
+          <select id="bKind"></select>
+          <select id="bStyle" aria-label="Стил"></select>
+          <select id="bSize" aria-label="Размер">
+            <option value="small">малка</option><option value="medium" selected>средна</option><option value="big">голяма</option>
+          </select>
+          <button class="btn" id="bBuild">Построй</button>
+        </div>
+        <div class="toggles">
+          <label class="toggle"><input type="checkbox" id="workers_enabled"><span></span>Селяните работят</label>
+          <label class="toggle"><input type="checkbox" id="village_auto"><span></span>Селата растат сами и режисьорът основава нови</label>
+        </div>
+      </div>
+      <div class="vgrid" id="villageList"></div>
+      <h2 class="sub">Селяни</h2>
+      <ul class="workers" id="workerList"></ul>
+      <button class="link-danger" id="villagesReset">Забрави всички села (постройките остават)</button>
+    </section>
+
     <!-- СЪБИТИЯ -->
     <section class="view" id="view-events">
       <header class="view-head">
         <h1>Събития</h1>
-        <p class="lede">Пазителят пуска изненади сам. Можеш и ти.</p>
+        <p class="lede">Режисьорът пуска изненади сам. Можеш и ти.</p>
       </header>
+      <div class="gm-settings">
+        <label class="toggle"><input type="checkbox" id="gm_enabled"><span></span>AI режисьорът решава какво да се случи</label>
+        <div class="field">
+          <label for="gm_power">Колко може режисьорът</label>
+          <select id="gm_power">
+            <option value="full">Почти всичко — и върху играчите</option>
+            <option value="normal">Кротко — събития, награди, надписи</option>
+          </select>
+        </div>
+      </div>
       <div class="chaos">
         <label for="chaos">Колко лудо да е</label>
         <input type="range" id="chaos" min="0" max="3" step="1">
@@ -217,6 +315,9 @@
       </div>
       <p class="event-note" id="eventNote"></p>
       <div class="event-grid" id="eventGrid"></div>
+      <h2 class="sub">Състезания</h2>
+      <p class="lede small">С класация отстрани на екрана и награда за победителя.</p>
+      <div class="event-grid" id="contestGrid"></div>
     </section>
 
     <!-- AI -->
@@ -239,8 +340,9 @@
           <input id="gemini_key" name="gemini_key" type="password" placeholder="Постави ключа тук">
         </div>
         <div class="field">
-          <label for="gemini_model">Модел на Gemini</label>
-          <input id="gemini_model" name="gemini_model">
+          <label for="gemini_model">Модел</label>
+          <select id="gemini_model" name="gemini_model"><option value="auto">Автоматично — препоръчително</option></select>
+          <small id="modelHint">Програмата сама избира работещ модел и сменя, ако някой спре.</small>
         </div>
         <div class="field">
           <label for="openai_key">Ключ за OpenAI</label>
@@ -254,6 +356,7 @@
         <div class="actions">
           <button class="btn btn-primary" type="submit">Запази</button>
           <button class="btn" type="button" id="testAi">Провери ключа</button>
+          <button class="btn btn-ghost" type="button" id="refreshModels">Обнови моделите</button>
           <span class="hint" id="aiResult"></span>
         </div>
       </form>
@@ -267,6 +370,7 @@
           <button class="chip is-on" data-f="all">Всичко</button>
           <button class="chip" data-f="game">Без конзолата</button>
           <button class="chip" data-f="problems">Само проблеми</button>
+          <button class="btn btn-sm" id="report">Запази отчет за проблем</button>
         </div>
       </header>
       <div class="log" id="log" role="log" aria-live="polite"></div>

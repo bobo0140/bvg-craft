@@ -92,6 +92,24 @@ function plural(n, one, many) {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+function fillSelect(sel, items, empty = "") {
+  // items: [[стойност, текст]]; пресъздава само ако списъкът се е сменил
+  const sig = JSON.stringify(items);
+  if (sel.dataset.sig === sig) return;
+  const keep = sel.value;
+  sel.dataset.sig = sig;
+  sel.innerHTML = items.length
+    ? items.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join("")
+    : `<option value="">${esc(empty)}</option>`;
+  if (items.some(([v]) => v === keep)) sel.value = keep;
+}
+
+function playerItems(onlyOnline = false) {
+  const online = S.online || [];
+  const rest = onlyOnline ? [] : (S.config.whitelist || []).filter(n => !online.includes(n));
+  return [...online.map(n => [n, `${n} · в света`]), ...rest.map(n => [n, n])];
+}
+
 function rosterMap() {
   return Object.fromEntries((S.roster || []).map(r => [r.name, r]));
 }
@@ -139,8 +157,10 @@ function renderHome() {
     : `<li class="empty">${S.ready ? "Никой не е влязъл." : S.running ? "Сървърът още зарежда." : "Сървърът не върви."}</li>`;
 
   const ev = S.event;
+  const table = ev && ev.standings && ev.standings.length
+    ? `<ol>${ev.standings.map(([n, v]) => `<li>${esc(n)} — ${v}${ev.amount ? ` / ${ev.amount}` : ""}</li>`).join("")}</ol>` : "";
   $("#eventNow").innerHTML = ev
-    ? `<strong>${esc(EVENT_NAMES[ev.key] || ev.title)}</strong><span>Остават ${ev.left} секунди</span>`
+    ? `<strong>${esc(EVENT_NAMES[ev.key] || ev.title)}</strong><span>Остават ${ev.left} секунди</span>${table}`
     : `<p class="empty">Нищо не върви в момента.</p>`;
   $("#randomEvent").textContent = ev ? "Спри събитието" : "Изненадай ги";
   $("#randomEvent").disabled = !S.ready || (!ev && !S.online.length);
@@ -173,6 +193,17 @@ function renderAi() {
     tip = "Без ключ духовете посрещат и коментират с готови реплики, а събитията вървят нормално. За разговори сложи безплатен ключ.";
   else if (/лимит/i.test(d))
     tip = "Безплатният лимит се нулира всеки ден. Дотогава духовете ползват готови реплики.";
+  const models = (a.models || []);
+  const items = [["auto", "Автоматично — препоръчително"], ...models.map(m => [m, m])];
+  const chosen = a.chosen || S.config.gemini_model || "auto";
+  if (chosen !== "auto" && !models.includes(chosen)) items.push([chosen, chosen + " (ръчно)"]);
+  const sel = $("#gemini_model");
+  const focused = document.activeElement === sel;
+  if (!focused) { fillSelect(sel, items); if (!sel.dataset.touched) sel.value = chosen; }
+  $("#modelHint").textContent = a.model
+    ? `Сега отговаря ${a.model}.` + (a.unavailable && a.unavailable.length ? ` Недостъпни: ${a.unavailable.slice(0, 4).join(", ")}.` : "")
+    : models.length ? `Налични ${models.length} модела. Ще избере сам.`
+    : a.list_error ? `Списъкът с модели не се взе: ${a.list_error}` : "Програмата сама избира работещ модел и сменя, ако някой спре.";
   const box = $("#aiStatus");
   box.className = "ai-status " + cls(h.ok);
   box.innerHTML = `<span class="dot"></span><div><b>${title}</b>
@@ -235,13 +266,13 @@ function renderPlayers() {
       ${head(n)}
       <span><span class="name">${esc(n)}</span><span class="tags">
         ${r.online ? '<span class="tag live">в света</span>' : ""}
-        ${r.admin ? '<span class="tag admin">админ</span>' : ""}
+        ${r.admin ? '<span class="tag admin">OP</span>' : ""}
         ${!r.whitelisted ? '<span class="tag">не е в списъка</span>' : ""}
       </span><span class="meta">${meta}</span></span>
       <span class="row-actions">
         ${r.online ? `<button class="btn btn-sm" data-a="prank" data-n="${esc(n)}">Пусни номер</button>` : ""}
         <button class="btn btn-sm" data-a="admin" data-n="${esc(n)}">
-          ${r.admin ? "Махни админ" : "Направи админ"}</button>
+          ${r.admin ? "Махни OP" : "Дай OP"}</button>
         ${r.whitelisted ? `<button class="btn btn-sm btn-danger" data-a="remove" data-n="${esc(n)}">Махни</button>`
           : `<button class="btn btn-sm" data-a="add" data-n="${esc(n)}">Добави в списъка</button>`}
       </span>
@@ -322,6 +353,82 @@ function renderEvents() {
   $$("#eventGrid .ev").forEach(b => b.addEventListener("click",
     () => call("event", b.dataset.k).then(refresh)));
   $("#chaosNote").textContent = CHAOS_TEXT[S.config.chaos] || "";
+
+  const blocked = !S.ready || !n || !!S.event;
+  const cg = $("#contestGrid");
+  const sig = JSON.stringify([blocked, (S.contests || []).length]);
+  if (cg.dataset.sig !== sig) {
+    cg.dataset.sig = sig;
+    cg.innerHTML = (S.contests || []).map(c => `
+      <button class="ev" data-c="${c.key}" ${blocked ? "disabled" : ""}>
+        <b>${esc(c.title)}</b><span>${esc(c.desc)}</span></button>`).join("");
+    $$("#contestGrid .ev").forEach(b => b.addEventListener("click",
+      () => call("contest", b.dataset.c).then(refresh)));
+  }
+  if (document.activeElement !== $("#gm_power")) $("#gm_power").value = S.config.gm_power || "full";
+  $("#gm_enabled").checked = S.config.gm_enabled !== false;
+}
+
+function renderGm() {
+  const g = S.gm || {};
+  const next = g.busy ? "Мисли в момента..."
+    : !S.ready ? "Ще започне, когато сървърът е готов."
+    : !S.online.length ? "Чака някой да влезе."
+    : !S.config.chaos ? "Изненадите са спрени (Тихо) — действа само ако го помолиш."
+    : g.next_in != null ? `Следващото решение след ${ago(g.next_in)}.` : "";
+  $("#gmNext").textContent = (g.enabled ? "Изкуственият разум гледа света и решава какво да се случи. "
+    : "AI режисьорът е изключен — пускат се готови сценарии. ") + next;
+  $("#gmNow").disabled = !S.ready || !S.online.length || g.busy;
+  $("#gmList").innerHTML = (g.decisions || []).map(d => `
+    <li><span class="when">преди ${ago(d.ago)}</span>
+      <span class="what"><b>${esc(d.text)}</b><span class="src ${d.source === "AI" ? "" : "plain"}">${esc(d.source)}</span>
+      ${d.done && d.done.length ? `<span class="done">${esc(d.done.join(" · "))}</span>` : ""}</span></li>`).join("");
+}
+
+function renderConsole() {
+  fillSelect($("#qPlayer"), playerItems(), "Няма играчи");
+  $$(".quick [data-q]").forEach(b => b.disabled = !S.running);
+}
+
+const KIND_ORDER = ["house", "farm", "well", "tower", "garden", "stall", "lamp"];
+
+function renderVillages() {
+  fillSelect($("#bPlayer"), playerItems(true), "Никой не е в света");
+  fillSelect($("#bKind"), (S.kinds || []).sort((a, b) => KIND_ORDER.indexOf(a.key) - KIND_ORDER.indexOf(b.key)).map(k => [k.key, k.name]));
+  fillSelect($("#bStyle"), [["", "стил по избор на селянина"], ...(S.styles || []).map(s => [s.key, s.name])]);
+  const can = S.ready && S.online.length;
+  $("#bVillage").disabled = !can;
+  $("#bBuild").disabled = !can;
+  $("#workers_enabled").checked = S.config.workers_enabled !== false;
+  $("#village_auto").checked = S.config.village_auto !== false;
+  const V = S.villages || { villages: [], workers: [] };
+  const KN = Object.fromEntries((S.kinds || []).map(k => [k.key, k.name]));
+  KN.plaza = "площад";
+  $("#villageList").innerHTML = V.villages.length ? V.villages.map(v => {
+    const counts = {};
+    v.kinds.forEach(k => counts[k] = (counts[k] || 0) + 1);
+    return `<article class="vcard"><h3>${esc(v.name)}</h3>
+      <div class="where">X ${v.x} · Z ${v.z} · ${plural(v.buildings, "постройка", "постройки")}</div>
+      <div class="chips">${Object.entries(counts).map(([k, c]) => `<span class="tag">${esc(KN[k] || k)}${c > 1 ? ` ×${c}` : ""}</span>`).join("")}</div>
+    </article>`;
+  }).join("") : `<p class="empty">Още няма села. Застани на поляна в играта и натисни „Ново село тук“ — или режисьорът ще основе сам.</p>`;
+  const list = $("#workerList");
+  if (list.contains(document.activeElement)) return;
+  list.innerHTML = V.workers.length ? V.workers.map(w => {
+    const what = w.searching ? `търси място за ${w.searching}`
+      : w.job ? (w.waiting ? `${w.job} — чака някой да дойде наблизо` : `строи ${w.job}`)
+      : `свободен${w.built ? ` · построил ${w.built}` : ""}`;
+    const pct = w.progress != null ? Math.round(w.progress * 100) : null;
+    return `<li><span><span class="name">${esc(w.name)}</span>${w.village ? ` <span class="tag">${esc(w.village)}</span>` : ""}
+        <span class="what">${esc(what)}${pct != null ? ` · ${pct}%` : ""}${w.x != null ? ` · X ${w.x} Z ${w.z}` : ""}</span>
+        ${pct != null ? `<div class="meter"><i style="width:${pct}%"></i></div>` : ""}</span>
+      <span class="row-actions">
+        ${w.job ? `<button class="btn btn-sm" data-w="stop" data-id="${w.id}">Спри строежа</button>` : ""}
+        <button class="btn btn-sm btn-danger" data-w="remove" data-id="${w.id}">Отпрати</button>
+      </span></li>`;
+  }).join("") : `<li class="empty">Още няма селяни.</li>`;
+  $$("#workerList [data-w]").forEach(b => b.addEventListener("click", () =>
+    call(b.dataset.w === "stop" ? "worker_stop" : "worker_remove", parseInt(b.dataset.id, 10)).then(refresh)));
 }
 
 function fillForms() {
@@ -338,6 +445,8 @@ function fillForms() {
   }
   $("#chaos").value = c.chaos;
   $("#director_minutes").value = c.director_minutes;
+  $("#ownerName").value = c.owner_name || "";
+  $("#version").textContent = S.version && S.version !== "dev" ? `версия ${S.version}` : "";
 }
 
 function collect(form) {
@@ -352,7 +461,26 @@ function collect(form) {
 }
 
 /* ---------- лог ---------- */
+const TERM_SRC = new Set(["Конзола", "RCON", "Сървър", "Админ"]);
+function renderTerm(items) {
+  const box = $("#term");
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  const frag = document.createDocumentFragment();
+  for (const e of items) {
+    if (e.level !== "console" && !TERM_SRC.has(e.src)) continue;
+    const d = document.createElement("div");
+    const mine = e.src === "Конзола" && String(e.msg).startsWith(">");
+    d.className = mine ? "me" : e.level === "console" ? "" : e.level;
+    d.textContent = e.level === "console" ? e.msg : `[${e.src}] ${e.msg}`;
+    frag.appendChild(d);
+  }
+  box.appendChild(frag);
+  while (box.children.length > 2000) box.removeChild(box.firstChild);
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
 function renderLog(items) {
+  renderTerm(items);
   const box = $("#log");
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
   const frag = document.createDocumentFragment();
@@ -417,7 +545,7 @@ $("#aiForm").addEventListener("submit", async e => {
 $("#testAi").addEventListener("click", async () => {
   $("#aiResult").textContent = "Питам...";
   const r = await api.test_ai();
-  $("#aiResult").textContent = r && r.ok ? `Работи: „${r.say}“` : `Не работи: ${r ? r.error : ""}`;
+  $("#aiResult").textContent = r && r.ok ? `Работи (${r.model || "?"}): „${r.say}“` : `Не работи: ${r ? r.error : ""}`;
 });
 
 $("#chaos").addEventListener("input", e => {
@@ -440,12 +568,66 @@ $("#addPlayer").addEventListener("submit", async e => {
   refresh();
 });
 
+const history = [];
+let histPos = 0;
 $("#consoleForm").addEventListener("submit", e => {
   e.preventDefault();
-  const v = $("#consoleInput").value;
-  if (v.trim()) call("console", v);
+  const v = $("#consoleInput").value.trim();
+  if (!v) return;
+  call("console", v);
+  if (history[history.length - 1] !== v) history.push(v);
+  histPos = history.length;
   $("#consoleInput").value = "";
 });
+$("#consoleInput").addEventListener("keydown", e => {
+  if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+  e.preventDefault();
+  histPos = Math.max(0, Math.min(history.length, histPos + (e.key === "ArrowUp" ? -1 : 1)));
+  $("#consoleInput").value = history[histPos] || "";
+});
+$$(".quick [data-q]").forEach(b => b.addEventListener("click", () =>
+  call("quick", b.dataset.q, $("#qPlayer").value || "").then(refresh)));
+
+/* ---------- режисьорът ---------- */
+$("#gmNow").addEventListener("click", () => call("gm_now", "").then(refresh));
+$("#gmAsk").addEventListener("submit", e => {
+  e.preventDefault();
+  const t = $("#gmText").value.trim();
+  if (!t) return;
+  call("gm_now", t).then(r => { if (r && r.ok) $("#gmText").value = ""; refresh(); });
+});
+$("#gm_enabled").addEventListener("change", e => call("save", { gm_enabled: e.target.checked }).then(refresh));
+$("#gm_power").addEventListener("change", e => call("save", { gm_power: e.target.value }).then(refresh));
+
+/* ---------- села ---------- */
+$("#bVillage").addEventListener("click", () => call("village_found", $("#bPlayer").value).then(refresh));
+$("#bBuild").addEventListener("click", () => call("village_build", $("#bPlayer").value,
+  $("#bKind").value, $("#bStyle").value, $("#bSize").value).then(refresh));
+$("#workers_enabled").addEventListener("change", e => call("save", { workers_enabled: e.target.checked }));
+$("#village_auto").addEventListener("change", e => call("save", { village_auto: e.target.checked }));
+$("#villagesReset").addEventListener("click", () => {
+  if (window.confirm("Да забравя ли всички села и селяни? Постройките остават в света."))
+    call("villages_reset").then(refresh);
+});
+
+/* ---------- играчи: собственик ---------- */
+$("#ownerForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  const n = $("#ownerName").value.trim();
+  if (n && !/^[A-Za-z0-9_]{1,16}$/.test(n)) return toast("Името в Minecraft е само с латински букви, цифри и _.", true);
+  await call("set_owner", n);
+  refresh();
+});
+
+/* ---------- AI модели и отчет ---------- */
+$("#gemini_model").addEventListener("change", e => { e.target.dataset.touched = "1"; });
+$("#refreshModels").addEventListener("click", async () => {
+  $("#modelHint").textContent = "Питам кои модели са налични...";
+  const r = await call("ai_models", true);
+  if (r && r.ok) toast(`Налични ${r.models.length} модела.`);
+  refresh();
+});
+$("#report").addEventListener("click", () => call("export_report"));
 
 async function loadVersions() {
   const sel = $("#mc_version");
@@ -595,7 +777,7 @@ async function refresh() {
   } catch (e) { return; }
   if (!S) return;
   const steps = [fillForms, renderPower, renderHealth, renderHome, renderServer,
-    renderPlayers, renderEvents, renderAi];
+    renderPlayers, renderEvents, renderAi, renderGm, renderConsole, renderVillages];
   // Една счупена част не бива да спира останалите
   for (const f of steps) {
     try { f(); } catch (e) { console.error(f.name, e); }

@@ -31,7 +31,8 @@ jobs:
           mods = [m.name for m in pkgutil.walk_packages(app.__path__, 'app.')];
           [importlib.import_module(m) for m in mods];
           need = {'app.server.manager', 'app.server.rcon', 'app.server.events',
-          'app.server.monitor', 'app.server.worldio',
+          'app.server.monitor', 'app.server.worldio', 'app.ai.director',
+          'app.game.villages', 'app.game.blueprints', 'app.version',
           'app.ai.brain', 'app.game.events_lib', 'app.api'};
           missing = need - set(mods);
           assert not missing, f'липсват: {missing}';
@@ -41,6 +42,13 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
         run: python tools/check_ui_calls.py
+
+      - name: Stamp version
+        shell: bash
+        run: |
+          printf '"""Попълва се при изграждането."""\nVERSION = "%s"\nBUILT = "%s"\n' \
+            "${{ github.run_number }}" "$(date -u +%Y-%m-%d)" > app/version.py
+          cat app/version.py
 
       - name: Build EXE
         run: >

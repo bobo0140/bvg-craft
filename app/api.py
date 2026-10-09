@@ -68,6 +68,8 @@ class Api:
         self._cfg = Config()
         self._sender = Sender(self._cfg)
         self._server = manager.Server(self._cfg, on_event=self._on_event)
+        # Дългите команди (книгата, големи надписи) не минават през RCON
+        self._sender.console = self._server.command
         self._brain = brain_mod.Brain(self._cfg, self._sender, self._server)
         self._monitor = Monitor(
             self._server, self._sender,
