@@ -615,9 +615,9 @@ def _players(api, bots, names):
     check("Режисьор", "изпълни плана", ok and "награда" in msg, msg)
     check("Режисьор", "играчите виждат репликата",
           wait(lambda: bots.got("BVG", "Проба от режисьора"), 10))
-    check("Режисьор", "наградата стигна", "passed" in s.query(
+    check("Режисьор", "наградата стигна", wait(lambda: "passed" in s.query(
         "execute if items entity Ivan_99 container.* minecraft:golden_apple")
-        [1].lower())
+        [1].lower(), 10))
     check("Режисьор", "отказа op и kill @a", "passed" not in s.query(
         "execute if entity @a[name=Ivan_99,gamemode=creative]")[1].lower())
     syn = [x for x in list(s.rejected)[before:] if x[1] == "syntax"]
