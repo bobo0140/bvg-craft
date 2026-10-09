@@ -286,14 +286,10 @@ def catalog(api):
     n, bad = validate(s, "помощници", cap.cmds)
     check(sec, f"реплики, надписи, награди, селяни ({n})", not bad, bad[:3])
 
-    # 3) Четене от света
-    ys = world.surfaces(s, [(0, 0), (8, 8)])
-    check(sec, "височина на земята (positioned over)",
-          all(y is not None for y in ys), ys)
-    empty = world.region_empty(s, 0, 290, 0, 3, 295, 3)
-    check(sec, "проверка за празно място (execute if blocks)", empty, empty)
+    # 3) Часът (височината и празното място — при играчите, там е заредено)
     t = world.time_of_day(s)
-    check(sec, "час от денонощието", t[0] is not None, t)
+    check(sec, "час от денонощието", t[0] is not None,
+          (t, s.query_many(["time query daytime", "time query day"])))
 
     # 4) Събитията (с измислен играч -> селектор)
     for key, cls in events_lib.LIBRARY.items():
@@ -442,6 +438,17 @@ def _players(api, bots, names):
     br._refresh_positions()
     check(sec, "позиции на играчите", len(br.pos) == 3, br.pos)
 
+    # четене от света до играч (заредени чънкове)
+    bp = br.pos.get("BVG")
+    if bp:
+        bx, bz = int(bp[0]), int(bp[2])
+        ys = world.surfaces(s, [(bx + 3, bz + 3), (bx - 4, bz + 2)])
+        check(sec, "височина на земята до играча", all(y is not None
+                                                        for y in ys), ys)
+        empty = world.region_empty(s, bx + 20, int(bp[1]) + 30, bz + 20,
+                                   bx + 23, int(bp[1]) + 34, bz + 23)
+        check(sec, "проверка за празно място", empty, empty)
+
     # духове
     r = api.place("builder", "BVG")
     check("Духове", "призоваване до играч", r.get("ok") and wait(
@@ -546,8 +553,13 @@ def _players(api, bots, names):
     s.query("give Mia minecraft:diamond 3")
     ok = wait(lambda: br.engine.last_result and
               br.engine.last_result[1] == "Mia", 20)
+    a = br.engine.active
     check("Състезания", "победителят е засечен и награден", ok,
-          br.engine.last_result)
+          (br.engine.last_result, br.engine.status(),
+           getattr(a, "base", None), getattr(a, "scores", None),
+           s.query("execute if items entity Mia container.* "
+                   "minecraft:diamond"),
+           s.query("clear Mia minecraft:diamond 0")))
     api.stop_event()
 
     # режисьорът с „AI"

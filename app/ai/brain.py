@@ -465,9 +465,9 @@ class Brain:
             ok, m = self.place_npc(key, name)
             say(m, "gold" if ok else "red")
         elif cmd in ("ден", "day"):
-            self.s.send("time set 1000")
+            self.s.send("time set day")
         elif cmd in ("нощ", "night"):
-            self.s.send("time set 13000")
+            self.s.send("time set night")
         elif cmd in ("ясно", "clear"):
             self.s.send("weather clear 1200")
         elif cmd == "op":

@@ -455,10 +455,11 @@ class Director:
                         s.send(f"weather {v} 600")
                         done.append(f"време {v}")
                 elif t == "time":
-                    v = {"day": 1000, "noon": 6000, "night": 13000,
-                         "midnight": 18000, "sunset": 12000}.get(
-                        str(a.get("value", "")))
-                    if v is not None:
+                    # Имената вървят навсякъде; на 26.x числото
+                    # нулира броя на дните, затова не ползваме числа
+                    v = str(a.get("value", ""))
+                    v = {"sunset": "night"}.get(v, v)
+                    if v in ("day", "noon", "night", "midnight"):
                         s.send(f"time set {v}")
                         done.append(f"време {a.get('value')}")
                 elif t == "prank":

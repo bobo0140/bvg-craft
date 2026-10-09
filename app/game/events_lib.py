@@ -232,7 +232,7 @@ class NightOfTheDead(Event):
 
     def start(self):
         self.dead = set()
-        self.s.send("time set 18000")          # полунощ (26.x няма „midnight")
+        self.s.send("time set midnight")   # име: върви и на 1.21, и на 26.x
         self.s.send("weather thunder 200")
         per = 2 + self.e.cfg.get("chaos")
         for p in self.players():
@@ -254,7 +254,7 @@ class NightOfTheDead(Event):
         for p in survivors:
             give(self.s, p, random.choice(REWARD_SMALL))
         self.s.send("kill @e[tag=bvg_undead]")
-        self.s.send("time set 1000")
+        self.s.send("time set day")
         self.s.send("weather clear")
         world.say(self.s, "keeper",
                   ("Оцелели: " + ", ".join(survivors)) if survivors

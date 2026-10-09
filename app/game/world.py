@@ -270,16 +270,26 @@ def players_info(sender, names):
     return out
 
 
+def _num(reply):
+    m = re.search(r"(-?\d+)\D*$", (reply or "").strip())
+    return int(m.group(1)) if m else None
+
+
 def time_of_day(sender):
-    """(час от денонощието 0-24000, номер на деня) или (None, None)."""
-    res = sender.query_many(["time query daytime", "time query day"]) \
-        if hasattr(sender, "query_many") else \
-        [sender.query("time query daytime"), sender.query("time query day")]
-    vals = []
-    for ok, r in res:
-        m = re.search(r"(-?\d+)\s*$", (r or "").strip()) if ok else None
-        vals.append(int(m.group(1)) if m else None)
-    return tuple(vals) if len(vals) == 2 else (None, None)
+    """(час от денонощието 0-24000, номер на деня) или (None, None).
+
+    До 1.21 има „time query daytime/day"; от 26.1 времето е „часовник" и
+    се пита с „time query time" (всички тикове) — сметката е наша.
+    """
+    res = sender.query_many(["time query daytime", "time query day"])
+    vals = [_num(r) if ok else None for ok, r in res]
+    if len(vals) == 2 and None not in vals:
+        return tuple(vals)
+    ok, r = sender.query("time query time")
+    total = _num(r) if ok else None
+    if total is None:
+        return (None, None)
+    return (total % 24000, total // 24000)
 
 
 def surfaces(sender, points):

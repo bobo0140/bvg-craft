@@ -651,7 +651,7 @@ class Api:
         "feed": "effect give {p} minecraft:saturation 5 10 true",
         "tp_me": "tp {p} {owner}", "tp_to": "tp {owner} {p}",
         "kick": "kick {p} Изгонен от собственика",
-        "day": "time set 1000", "night": "time set 13000",
+        "day": "time set day", "night": "time set night",
         "clear": "weather clear 1200", "rain": "weather rain 1200",
         "save": "save-all", "list": "list",
         "peaceful": "difficulty peaceful", "normal": "difficulty normal",
