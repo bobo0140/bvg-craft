@@ -316,7 +316,11 @@ class Brain:
                 world.say(self.s, "keeper",
                           f"{ev['player']} постигна „{name}“. Браво!")
         elif t == "named_death":
-            self.director.note(ev.get("message", "")[:120])
+            msg = ev.get("message", "")
+            # „X was killed" е /kill — нашите духове и селяни, които
+            # махаме и слагаме наново; не е новина за режисьора
+            if not msg.endswith("was killed"):
+                self.director.note(msg[:120], important=bool(ev.get("killer")))
         try:
             self.engine.feed(ev)
         except Exception:

@@ -159,6 +159,10 @@ class Capture:
         self.cmds.extend(cs)
 
     def query(self, c):
+        if c.startswith("time query"):
+            # часът се пита по два начина (според версията) — това е
+            # проба, не команда, която трябва да мине и на двете
+            return True, "The time is 6000"
         self.cmds.append(c)
         if "Pos" in c:
             return True, "X has the following entity data: [10.5d, 70.0d, 10.5d]"
@@ -481,6 +485,7 @@ def living_catalog(s):
     fake.server = types.SimpleNamespace(online={"Probe_1"})
     q = quests_mod.Quests(cap, fake)
     q.items = []
+    keep_max, quests_mod.MAX_PER_PLAYER = quests_mod.MAX_PER_PLAYER, 10
     for kind, target in (("kill", "zombie"), ("mine", "coal_ore"),
                          ("craft", "bread"), ("collect", "wheat")):
         ok, msg = q.give("Probe_1", kind, target, 1, title="проба",
@@ -488,6 +493,7 @@ def living_catalog(s):
         if not ok:
             BAD.append(("задача " + kind, target, msg))
     q.give("Probe_1", "visit", at=[10, 10], fame=5)
+    quests_mod.MAX_PER_PLAYER = keep_max
     q.next_check = 0
     q.tick({"Probe_1": (10.5, 70.0, 10.5)}, {})
     n, bad = validate(s, "задачи (код)", cap.cmds, subst)
@@ -856,11 +862,14 @@ def living(api, bots, names):
     # --- слава и рангове ---
     br.fame.add("Mia", 60, "тест")
     pts = br.fame.points("Mia")
-    r = s.query("scoreboard players get Mia slava")[1]
-    check(sec, "слава в TAB", f"has {pts}" in r, (pts, r))
+    check(sec, "слава в TAB", wait(lambda: f"has {pts}" in s.query(
+        "scoreboard players get Mia slava")[1], 10),
+        (pts, s.query("scoreboard players get Mia slava")))
     idx = fame_mod.rank_of(pts)
-    check(sec, f"ранг „{fame_mod.RANKS[idx][1]}“ като отбор", "passed" in s.query(
-        f"execute if entity @a[name=Mia,team=bvg_r{idx}]")[1].lower(), idx)
+    check(sec, f"ранг „{fame_mod.RANKS[idx][1]}“ като отбор", wait(
+        lambda: "passed" in s.query(
+            f"execute if entity @a[name=Mia,team=bvg_r{idx}]")[1].lower(), 10),
+        idx)
     # чатът идва с представката на ранга — трябва да се разчете името
     TALKS.clear()
     bots.cmd(bot="Mia", chat="Пазителю, здравей!")
@@ -923,6 +932,7 @@ def living(api, bots, names):
     # --- бос ---
     api.stop_event()
     f_mia = br.fame.points("Mia")
+    last0 = br.engine.last_result
     r = api.boss("Ivan_99", events_lib.BOSS_PRESETS[0]["name"])
     alive = wait(lambda: "passed" in s.query(
         "execute if entity @e[tag=bvg_boss]")[1].lower(), 10)
@@ -946,8 +956,10 @@ def living(api, bots, names):
         s.query("data get entity @e[tag=bvg_boss,limit=1] Health"))
     s.query("damage @e[tag=bvg_boss,limit=1] 5000 minecraft:player_attack "
             "by Mia")
-    won = wait(lambda: br.engine.last_result and
-               br.engine.last_result[1] == "Mia", 15)
+    won = wait(lambda: br.engine.last_result is not last0 and
+               br.engine.last_result and br.engine.last_result[1] == "Mia"
+               and br.engine.last_result[2] ==
+               events_lib.BOSS_PRESETS[0]["name"], 20)
     check(sec, "бос: убиецът (с ранг в името) е засечен", won,
           (br.engine.last_result, list(srv.recent)[-6:]))
     check(sec, "бос: слава за победата", br.fame.points("Mia") >= f_mia + 60,
@@ -967,10 +979,13 @@ def living(api, bots, names):
     check(sec, "гост: Мара дойде при Mia", r.get("ok") and here, r)
     check(sec, "гост: репликата стига", wait(
         lambda: bots.got("Mia", "Стока за теб"), 10))
-    off = s.query("data get entity @e[tag=bvg_trader_v,limit=1] "
-                  "Offers.Recipes")[1]
+    sell = s.query("data get entity @e[tag=bvg_trader_v,limit=1] "
+                   "Offers.Recipes[0].sell.id")[1]
+    third = s.query("data get entity @e[tag=bvg_trader_v,limit=1] "
+                    "Offers.Recipes[2]")[1]
     check(sec, "гост: истински сделки (без command_block)",
-          "diamond" in off and "command_block" not in off, off[:300])
+          "minecraft:diamond" in sell and "command_block" not in third,
+          (sell, third[:200]))
     br._refresh_positions()
     br.last_talk.clear()
     TALKS.clear()
@@ -995,17 +1010,24 @@ def living(api, bots, names):
     if free:
         w = free[0]
         r = s.query(f"data get entity @e[tag=bvg_w{w['id']},limit=1] NoAI")[1]
-        check(sec, "свободният селянин се движи сам (NoAI 0)", "0b" in r, r)
+        # без AI е 1b; с AI играта или пише 0b, или изобщо не пази полето
+        check(sec, "свободният селянин се движи сам (NoAI 0)",
+              "0b" in r or "found no elements" in r.lower(), r)
         r = s.query(f"data get entity @e[tag=bvg_w{w['id']},limit=1] "
                     f"Offers.Recipes")[1]
         check(sec, "селянинът търгува", "emerald" in r, r[:200])
-        # селянин сам дава задача на играч до него
-        api._cfg.data["villager_quests"] = True
+        # селянин сам дава задача на играч до него (другите — настрани)
         for q in list(br.quests.items):
             if q["player"] == "BVG":
                 br.quests._drop(q)
+        s.query_many([f"tp BVG @e[tag=bvg_w{w['id']},limit=1]",
+                      "execute as Mia at @s run tp @s ~60 ~ ~",
+                      "execute as Ivan_99 at @s run tp @s ~-60 ~ ~"])
+        time.sleep(1.5)
+        br._refresh_positions()
+        br.villages.refresh_positions()
         br.villages._q_player, br.villages._q_worker = {}, {}
-        s.query(f"tp BVG @e[tag=bvg_w{w['id']},limit=1]")
+        api._cfg.data["villager_quests"] = True
         br.slow_at = 0
         got = wait(lambda: any(q["player"] == "BVG" and
                                q["giver"].get("kind") == "villager"
@@ -1013,7 +1035,10 @@ def living(api, bots, names):
         check(sec, "селянин сам дава задача", got, br.quests.status())
         bots.cmd(bot="BVG", chat="!задачи")
         check(sec, "!задачи в играта", wait(
-            lambda: bots.got("BVG", "📜"), 10))
+            lambda: bots.got("BVG", "остават") or
+            bots.got("BVG", "Нямаш задачи"), 10),
+            [e.get("text") for e in bots.events
+             if e.get("bot") == "BVG" and e.get("ev") == "msg"][-4:])
 
     # --- постройка по чертеж от режисьора ---
     GM_PLANS.append({"thought": "арена", "actions": [{

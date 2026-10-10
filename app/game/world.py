@@ -294,21 +294,32 @@ def _num(reply):
     return int(m.group(1)) if m else None
 
 
+_TIME_FORM = ["daytime"]          # коя форма на „time query" върви тук
+
+
 def time_of_day(sender):
     """(час от денонощието 0-24000, номер на деня) или (None, None).
 
     До 1.21 има „time query daytime/day"; от 26.1 времето е „часовник" и
     се пита с „time query time" (всички тикове) — сметката е наша.
+    Помним коя форма е минала, за да не пращаме грешната всеки път.
     """
-    res = sender.query_many(["time query daytime", "time query day"])
-    vals = [_num(r) if ok else None for ok, r in res]
-    if len(vals) == 2 and None not in vals:
-        return tuple(vals)
-    ok, r = sender.query("time query time")
-    total = _num(r) if ok else None
-    if total is None:
-        return (None, None)
-    return (total % 24000, total // 24000)
+    order = ["time", "daytime"] if _TIME_FORM[0] == "time" else \
+        ["daytime", "time"]
+    for form in order:
+        if form == "daytime":
+            res = sender.query_many(["time query daytime", "time query day"])
+            vals = [_num(r) if ok else None for ok, r in res]
+            if len(vals) == 2 and None not in vals:
+                _TIME_FORM[0] = "daytime"
+                return tuple(vals)
+        else:
+            ok, r = sender.query("time query time")
+            total = _num(r) if ok else None
+            if total is not None:
+                _TIME_FORM[0] = "time"
+                return (total % 24000, total // 24000)
+    return (None, None)
 
 
 def surfaces(sender, points):
