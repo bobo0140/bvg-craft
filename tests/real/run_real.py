@@ -1020,7 +1020,12 @@ def living(api, bots, names):
         "execute if entity @e[tag=bvg_keeper_v]")[1].lower(), 8))
 
     # --- свободните селяни се разхождат и търгуват ---
-    free = [w for w in br.villages.workers if not w.get("_job")]
+    # селата да не растат точно сега — иначе свободният селянин може да
+    # поеме нов строеж посред проверката
+    api._cfg.data["village_auto"] = False
+    time.sleep(3)
+    free = [w for w in br.villages.workers if not w.get("_job")
+            and w["id"] not in br.villages.searching]
     if free:
         w = free[0]
         r = s.query(f"data get entity @e[tag=bvg_w{w['id']},limit=1] NoAI")[1]
@@ -1053,6 +1058,8 @@ def living(api, bots, names):
             bots.got("BVG", "Нямаш задачи"), 10),
             [e.get("text") for e in bots.events
              if e.get("bot") == "BVG" and e.get("ev") == "msg"][-4:])
+
+    api._cfg.data["village_auto"] = True
 
     # --- постройка по чертеж от режисьора ---
     GM_PLANS.append({"thought": "арена", "actions": [{

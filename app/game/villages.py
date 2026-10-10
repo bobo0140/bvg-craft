@@ -774,7 +774,7 @@ class Villages:
         players = {n: p for n, p in self.positions().items()
                    if (dims or {}).get(n, "overworld") == "overworld"}
         for w in self.workers:
-            if w.get("_job") or not w.get("pos"):
+            if w.get("_job") or not w.get("pos") or w["id"] in self.searching:
                 continue
             if now - self._q_worker.get(w["id"], 0) < 180:
                 continue
