@@ -619,8 +619,11 @@ def players_phase(api, version):
 
 def _players(api, bots, names):
     s, srv, br = api._sender, api._server, api._brain
-    br.director.next_at = time.time() + 10 ** 6     # само когато ние кажем
-    director_mod.MIN_GAP = 10 ** 6
+    # Режисьорът мисли само когато тестът каже: без таймер (и след всяко
+    # решение — пак без), без бързи реакции (last_think е 0 в началото)
+    br.director.next_at = time.time() + 10 ** 6
+    br.director.period = lambda: 10 ** 6
+    director_mod.MIN_GAP = float("inf")
     br.visits.next_at = time.time() + 10 ** 6        # гостите — накрая
     br.villages.next_auto = time.time() + 10 ** 6    # селата сами — накрая
     api._cfg.data["villager_quests"] = False
@@ -752,6 +755,17 @@ def _players(api, bots, names):
     # събития с истински играчи
     before = len(s.rejected)
     for key in events_lib.LIBRARY:
+        busy = br.engine.status()
+        if busy:
+            # нещо друго вече върви — кой го е пуснал? (за отчета)
+            BAD.append((f"преди {key}", str(busy.get("title")),
+                        str([(int(time.time() - t), k) for t, k in
+                             br.engine.history[-3:]]) + " " +
+                        str([(int(time.time() - t), x, src, d) for
+                             t, x, src, d in list(br.director.decisions)
+                             [-2:]])))
+            api.stop_event()
+            time.sleep(0.5)
         r = api.event(key)
         time.sleep(4)
         api.stop_event()
@@ -1193,7 +1207,7 @@ def finish(args, version, t0, api=None):
         lines += list(api._server.recent)[-40:]
         lines += ["```", "", "## Последни редове от лога", "```"]
         lines += [f"{e['t']} [{e['level']}] [{e['src']}] {e['msg']}"
-                  for e in log.since(0, limit=100000)[-120:]]
+                  for e in log.since(0, limit=100000)[-400:]]
         lines.append("```")
     with open(args.out + ".md", "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
