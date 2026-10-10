@@ -1124,7 +1124,12 @@ class Engine:
             self._bar_hide()
             return
         if not self.online():
-            a.done = True            # всички излязоха — няма за кого
+            # всички излязоха — няма за кого; чистим боса, мобовете, лентите
+            try:
+                a.finish(None)
+            except Exception:
+                pass
+            a.done = True
             self.active = None
             self._bar_hide()
             return

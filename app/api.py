@@ -63,6 +63,20 @@ class _Capture:
 
 
 
+class _OnlyProvider:
+    """Настройки, в които има ключ само за една услуга — за проверката."""
+
+    def __init__(self, cfg, prov):
+        self.cfg, self.prov = cfg, prov
+
+    def get(self, key, default=None):
+        if key == "ai_provider":
+            return self.prov
+        if key.endswith("_key") and key != providers.PROVIDERS[self.prov]["key"]:
+            return ""
+        return self.cfg.get(key, default)
+
+
 class Api:
     def __init__(self):
         self._cfg = Config()
@@ -166,6 +180,11 @@ class Api:
                          for k, v in events_lib.CONTESTS.items()],
             "gm": self._gm_status(),
             "villages": self._brain.villages.status(),
+            "story": self._story(),
+            "quests": self._brain.quests.status(),
+            "fame": self._brain.fame.top(10),
+            "visits": self._brain.visits.status(),
+            "bosses": [b["name"] for b in events_lib.BOSS_PRESETS],
             "kinds": [{"key": k, "name": n} for k, n in
                       blueprints.KIND_NAMES.items() if k != "plaza"],
             "styles": [{"key": k, "name": n} for k, n in
@@ -189,8 +208,24 @@ class Api:
                 "admin": n in admins, "ip": ip,
                 "ip_kind": classify_ip(ip) if ip else None,
                 "deaths": (known.get(n) or {}).get("deaths", 0),
-                "visits": (known.get(n) or {}).get("visits", 0)})
+                "visits": (known.get(n) or {}).get("visits", 0),
+                "fame": (known.get(n) or {}).get("fame", 0),
+                "rank": self._rank_name((known.get(n) or {}).get("fame", 0))})
         return out
+
+    @staticmethod
+    def _rank_name(pts):
+        from .game.fame import RANKS, rank_of
+        return RANKS[rank_of(int(pts or 0))][1]
+
+    def _story(self):
+        d = self._brain.director
+        st = d.story
+        now = time.time()
+        return {"title": st.get("title") or "", "chapter": st.get("chapter")
+                or 0, "goal": st.get("goal") or "",
+                "chronicle": [{"ago": int(now - t), "text": x}
+                              for t, x in st.get("chronicle", [])[-8:]][::-1]}
 
     def _health(self):
         """Какво работи — за да не се гадае защо нещо мълчи."""
@@ -229,18 +264,18 @@ class Api:
                             f"сървърът казва {ll[1]}, водя {len(known)}"})
 
         st = providers.STATS
-        prov = self._cfg.get("ai_provider")
-        has_key = bool(self._cfg.get("gemini_key" if prov == "gemini"
-                                     else "openai_key"))
-        if not has_key:
+        keyed = providers.configured(self._cfg)
+        if not keyed:
             out.append({"name": "Изкуствен разум", "ok": False,
-                        "detail": "Няма ключ."})
+                        "detail": "Няма ключ. Сложи поне един безплатен "
+                                  "(Gemini или Groq) в раздел AI."})
         elif st["last_error"] and st["last_error_at"] > st["last_ok"]:
             out.append({"name": "Изкуствен разум", "ok": False,
                         "detail": st["last_error"][:120]})
         elif st["ok"]:
+            names = ", ".join(providers.PROVIDERS[p]["name"] for p in keyed)
             out.append({"name": "Изкуствен разум", "ok": True,
-                        "detail": f"{st['ok']} отговора"})
+                        "detail": f"{st['ok']} отговора · {names}"})
         else:
             out.append({"name": "Изкуствен разум", "ok": None,
                         "detail": "Ключът е сложен, още не е питан."})
@@ -249,11 +284,15 @@ class Api:
     def _ai_status(self):
         st = providers.STATS
         ms = providers.model_status(self._cfg)
+        prov = ms.get("provider") or ""
         return {"ok": st["ok"], "err": st["err"], "busy": st["busy"],
                 "last_error": st["last_error"],
                 "last_ok_ago": int(time.time() - st["last_ok"])
                 if st["last_ok"] else None,
                 "model": ms["working"], "models": ms["models"],
+                "provider": providers.PROVIDERS.get(prov, {}).get("name", ""),
+                "providers": ms["providers"], "today": ms["today"],
+                "configured": len(providers.configured(self._cfg)),
                 "chosen": ms["chosen"], "unavailable": ms["unavailable"],
                 "list_error": ms["list_error"]}
 
@@ -278,9 +317,11 @@ class Api:
     def save(self, values):
         try:
             values = values or {}
+            keys = [p["key"] for p in providers.PROVIDERS.values()]
+            new_key = any(values.get(k) and not str(values[k]).startswith("•")
+                          for k in keys)
             self._cfg.update(values)
-            if any(values.get(k) for k in ("gemini_key", "openai_key")) or \
-                    "ai_provider" in values:
+            if new_key:
                 providers.forget_models()
             return {"ok": True}
         except Exception as e:
@@ -564,28 +605,64 @@ class Api:
         _bg(self._brain.talk, key, who, text)
         return {"ok": True}
 
-    def test_ai(self):
-        prov = self._cfg.get("ai_provider") or "gemini"
-        key = self._cfg.get("gemini_key" if prov == "gemini" else "openai_key")
-        if key:
-            providers.list_models(prov, key, refresh=True)
-        reply, err = providers.ask(
-            self._cfg, characters.system_prompt("keeper"),
-            [{"role": "user", "content": "Кажи едно кратко изречение за "
-                                         "проверка. Без команди."}],
-            force=True)
-        if err:
-            return {"ok": False, "error": err}
-        return {"ok": True, "say": reply.get("say", ""),
-                "model": providers.STATS.get("model", "")}
+    def clear_key(self, prov):
+        info = providers.PROVIDERS.get(prov)
+        if not info:
+            return {"ok": False, "error": "Няма такава услуга."}
+        self._cfg.set(info["key"], "")
+        providers.forget_models()
+        return {"ok": True, "message": f"Ключът за {info['name']} е махнат."}
+
+    def test_ai(self, only=None):
+        """Пробва всяка услуга с ключ поотделно. -> кой отговаря и кой не."""
+        keyed = providers.configured(self._cfg)
+        if only:
+            keyed = [p for p in keyed if p == only]
+        if not keyed:
+            return {"ok": False, "error": "Няма ключ.", "results": []}
+        results = []
+        for prov in keyed:
+            info = providers.PROVIDERS[prov]
+            key = self._cfg.get(info["key"])
+            models, lerr = providers.list_models(prov, key, refresh=True)
+            cfg = _OnlyProvider(self._cfg, prov)
+            t0 = time.time()
+            reply, err = providers.ask(
+                cfg, characters.system_prompt("keeper"),
+                [{"role": "user", "content": "Кажи едно кратко изречение за "
+                                             "проверка. Без команди."}],
+                force=True, max_tokens=600, timeout=40, role="fast")
+            results.append({"provider": prov, "name": info["name"],
+                            "ok": not err, "models": len(models),
+                            "model": providers.STATS["by"].get(prov, {})
+                            .get("model", "") if not err else "",
+                            "say": (reply or {}).get("say", "") if not err
+                            else "", "error": err or lerr or "",
+                            "seconds": round(time.time() - t0, 1)})
+        good = [r for r in results if r["ok"]]
+        first = good[0] if good else None
+        return {"ok": bool(good), "results": results,
+                "say": first["say"] if first else "",
+                "model": f"{first['name']} / {first['model']}" if first else "",
+                "error": None if good else "; ".join(
+                    f"{r['name']}: {r['error'][:120]}" for r in results)}
 
     def ai_models(self, refresh=False):
-        prov = self._cfg.get("ai_provider") or "gemini"
-        key = self._cfg.get("gemini_key" if prov == "gemini" else "openai_key")
-        models, err = providers.list_models(prov, key, refresh=bool(refresh))
+        out = []
+        for prov in providers.configured(self._cfg):
+            key = self._cfg.get(providers.PROVIDERS[prov]["key"])
+            models, err = providers.list_models(prov, key,
+                                                refresh=bool(refresh))
+            out.append({"provider": prov, "models": models[:40],
+                        "error": err})
         st = providers.model_status(self._cfg)
-        return {"ok": bool(models), "models": models, "error": err,
-                "working": st["working"], "chosen": st["chosen"]}
+        gem = next((o for o in out if o["provider"] == "gemini"), None)
+        return {"ok": any(o["models"] for o in out), "by": out,
+                "models": gem["models"] if gem else [],
+                "error": None if any(o["models"] for o in out) else
+                "; ".join(o["error"] or "" for o in out) or "Няма ключ.",
+                "working": st["working"], "chosen": st["chosen"],
+                "providers": st["providers"]}
 
     # ---------- режисьор, състезания, села ----------
 
@@ -600,6 +677,48 @@ class Api:
             .strip() or None, admin=owner)
         return {"ok": ok, "message": msg if ok else None,
                 "error": None if ok else msg}
+
+    def boss(self, player="", preset=""):
+        if not self._server.ready:
+            return {"ok": False, "error": "Сървърът не е готов."}
+        if not self._server.online:
+            return {"ok": False, "error": "Няма никой в света."}
+        spec = next((b for b in events_lib.BOSS_PRESETS
+                     if b["name"] == preset), None)
+        ok, msg = self._brain.engine.start_boss(
+            spec, player if player in self._server.online else None)
+        return {"ok": ok, "message": f"Босът {msg} се появи." if ok else None,
+                "error": None if ok else msg}
+
+    def spirit_visit(self, key="", player=""):
+        if not self._server.ready:
+            return {"ok": False, "error": "Сървърът не е готов."}
+        ok, msg = self._brain.visits.start(key or None, player or None,
+                                           reason="собственикът го прати")
+        return {"ok": ok, "message": msg if ok else None,
+                "error": None if ok else msg}
+
+    def quest_cancel(self, qid):
+        ok = self._brain.quests.cancel(int(qid))
+        return {"ok": ok, "message": "Задачата е махната." if ok else None,
+                "error": None if ok else "Няма такава задача."}
+
+    def story_reset(self):
+        self._brain.director.reset_story()
+        self._brain.quests.reset()
+        return {"ok": True, "message": "Историята започва отначало."}
+
+    def fame_add(self, player, points):
+        try:
+            pts = int(points)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Точките са число."}
+        if not re.fullmatch(r"[A-Za-z0-9_]{1,16}", player or ""):
+            return {"ok": False, "error": "Избери играч."}
+        self._brain.fame.add(player, max(-1000, min(pts, 1000)),
+                             "от собственика")
+        return {"ok": True, "message": f"{player}: "
+                f"{self._brain.fame.points(player)} слава."}
 
     def contest(self, key):
         if not self._server.ready:
@@ -724,12 +843,27 @@ class Api:
                 lines.append(f"  {h['name']}: {h['ok']} — {h['detail']}")
             ai = st["ai"]
             lines += ["", "== AI ==",
-                      f"доставчик: {self._cfg.get('ai_provider')}, избран "
-                      f"модел: {ai['chosen']}, отговаря: {ai['model'] or '—'}",
-                      f"налични: {', '.join(ai['models'][:12]) or '—'}",
+                      f"ред: {self._cfg.get('ai_provider')}, отговаря: "
+                      f"{ai['provider'] or '—'} / {ai['model'] or '—'}, днес "
+                      f"{ai['today']} заявки",
                       f"недостъпни: {', '.join(ai['unavailable']) or '—'}",
                       f"успешни {ai['ok']}, грешки {ai['err']}, "
-                      f"последна грешка: {ai['last_error'] or '—'}",
+                      f"последна грешка: {ai['last_error'] or '—'}"]
+            for p in ai["providers"]:
+                if p["set"]:
+                    lines.append(f"  {p['name']}: модели {p['models']}, "
+                                 f"водещи {', '.join(p['top']) or '—'}, "
+                                 f"ок {p['ok']}, грешки {p['err']}, "
+                                 f"{p['last_error'] or ''}")
+            story = st["story"]
+            lines += ["", "== История ==",
+                      f"„{story['title']}“, глава {story['chapter']}, "
+                      f"цел: {story['goal']}"]
+            lines += [f"  {c['text']}" for c in story["chronicle"]]
+            lines += ["", "== Задачи ==",
+                      json.dumps(st["quests"], ensure_ascii=False)[:2000],
+                      "", "== Слава ==",
+                      json.dumps(st["fame"], ensure_ascii=False)[:1000],
                       "", "== Режисьор =="]
             for d in st["gm"]["decisions"]:
                 lines.append(f"  преди {d['ago']} сек ({d['source']}): "
@@ -812,11 +946,12 @@ class Api:
             snd.query("kill @e[tag=bvg_probe]")
             snd.enabled = was or srv.ready
 
-        prov = self._cfg.get("ai_provider")
-        if self._cfg.get("gemini_key" if prov == "gemini" else "openai_key"):
+        if providers.configured(self._cfg):
             r = self.test_ai()
-            add("Изкуственият разум отговаря", r["ok"],
-                r.get("say") or r.get("error", ""))
+            for res in r["results"]:
+                add(f"AI: {res['name']}", res["ok"],
+                    (f"{res['model']} ({res['seconds']} сек): {res['say']}"
+                     if res["ok"] else res["error"])[:200])
         else:
             add("Изкуственият разум отговаря", False, "Няма ключ.")
         return {"ok": True, "checks": checks}
@@ -882,6 +1017,30 @@ class Api:
              "0 310 0 all"),
             ("Чистене на трева", "fill 0 310 0 1 311 1 minecraft:air replace "
              "#minecraft:small_flowers"),
+            ("Ранг: отбор", "team add bvg_probe_t"),
+            ("Ранг: представка", 'team modify bvg_probe_t prefix '
+             '{"text":"[Проба] ","color":"gold"}'),
+            ("Ранг: махане", "team remove bvg_probe_t"),
+            ("Слава в TAB", 'scoreboard objectives add bvgprobe2 dummy '
+             '{"text":"Слава"}'),
+            ("Махане на славата", "scoreboard objectives remove bvgprobe2"),
+            ("Бос (атрибути, броня)", "summon zombie ~ ~ ~ " +
+             events_lib.boss_nbt(events_lib.boss_spec(
+                 events_lib.BOSS_PRESETS[0])).replace("bvg_boss",
+                                                      "bvg_probe")),
+            ("Търговец с истински сделки", "summon villager ~ ~ ~ "
+             '{Tags:["bvg_probe"],NoAI:1b,Offers:{Recipes:[' +
+             world.recipes([("emerald 2", "diamond 1")]) + "]}}"),
+            ("Селянин тръгва да се разхожда",
+             "data merge entity @e[tag=bvg_probe,type=villager,limit=1] "
+             "{NoAI:0b}"),
+            ("Задача: статистика за убити", "scoreboard objectives add "
+             "bvgprobe3 minecraft.killed:minecraft.zombie"),
+            ("Махане на статистиката", "scoreboard objectives remove "
+             "bvgprobe3"),
+            ("Книга-летопис", guide.book_command(
+                "@a[tag=bvg_none]", "Летопис на BVG WORLD", "Режисьорът",
+                ["Проба", "Втора страница"])),
         ]
         for label, command in probes:
             if not command:
@@ -905,6 +1064,18 @@ class Api:
             add("Позиция на играч", None, "Няма играч в света за проба.")
 
     # ---------- разни ----------
+
+    def open_url(self, prov):
+        """Страницата за ключ на услугата — в обикновения браузър."""
+        info = providers.PROVIDERS.get(prov)
+        if not info:
+            return {"ok": False, "error": "Няма такава услуга."}
+        import webbrowser
+        try:
+            webbrowser.open(info["url"])
+        except Exception as e:
+            return {"ok": False, "error": f"Отвори ръчно: {info['url']} ({e})"}
+        return {"ok": True, "message": f"Отварям {info['url']}"}
 
     def open_folder(self, which="app"):
         path = {"app": paths.app_dir(), "server": paths.SERVER,

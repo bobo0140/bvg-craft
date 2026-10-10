@@ -48,6 +48,8 @@ from app.server.rcon import classify_reply  # noqa: E402
 from app.ai import providers, director as director_mod  # noqa: E402
 from app.ai import brain as brain_mod  # noqa: E402
 from app.game import blueprints, events_lib, guide, world  # noqa: E402
+from app.game import fame as fame_mod, quests as quests_mod  # noqa: E402
+from app.game import spirits as spirits_mod, villages as villages_mod  # noqa: E402
 from app.logbus import log  # noqa: E402
 
 RESULTS = []          # (раздел, име, успех, подробности)
@@ -80,16 +82,44 @@ def wait(pred, timeout, step=0.5):
 
 POS_IN_CTX = re.compile(r"X=(-?\d+) Y=(-?\d+) Z=(-?\d+)")
 GM_PLANS = []         # следващите планове на режисьора (FIFO)
+TALKS = []            # (дух, кой говори) — кой е разпознат в чата
+VISIT_REPLIES = {
+    "Пазителят": {"say": "Mia, Пазителят има задача за теб.",
+                  "quest": {"kind": "collect", "target": "wheat",
+                            "amount": 2, "title": "Жито за селото",
+                            "reward": ["emerald 2"], "fame": 10},
+                  "gift": "bread 2"},
+    "Мара": {"say": "Стока за теб, скъпи!",
+             "offers": [{"buy": "emerald 1", "sell": "diamond 1"},
+                        {"buy": "wheat 4", "sell": "emerald 1"},
+                        {"buy": "emerald 2", "sell": "command_block 1"}]},
+    "Шегаджията": {"say": "Хехе, изненада!", "prank": False},
+    "Майсторът": {"say": "Тук ще стане хубаво.", "build": None},
+}
+
+
+def _who(system):
+    m = re.search(r"Ти си (Пазителят|Майсторът|Шегаджията|Мара)", system)
+    return m.group(1) if m else ""
 
 
 def fake_ask(cfg, system, messages, audio=None, timeout=45, force=False,
-             max_tokens=4096):
+             max_tokens=4096, **kw):
     last = messages[-1]["content"]
     providers._note_ok("сценарий")
     if "РЕЖИСЬОРЪТ" in system:
         if GM_PLANS:
             return GM_PLANS.pop(0), None
         return {"thought": "нищо", "actions": [], "next_in_minutes": 20}, None
+    who = _who(system)
+    if last.startswith("(появяваш се до"):
+        return dict(VISIT_REPLIES.get(who, {"say": "Ето ме."})), None
+    if ":" in last and who:
+        TALKS.append((who, last.split(":")[0]))
+    if who == "Мара" and "колко" in last:
+        return {"say": "Евтино е, само за теб!"}, None
+    if who == "Пазителят" and "здравей" in last.lower():
+        return {"say": "Здравей, страннико от далечни земи!"}, None
     if "селянин-строител" in system:
         return {"say": "Добре, ще ти направя малка къща!",
                 "job": {"kind": "house", "style": "spruce",
@@ -275,7 +305,13 @@ def catalog(api):
                  "тест")
     world.bubble_tag(cap, "bvg_probe", "балонче")
     world.spawn_villager(cap, "bvg_probe", "Проба", "yellow", "mason",
-                         (0.5, 300, 0.5), 90, extra_tags=("bvg_worker",))
+                         (0.5, 300, 0.5), 90, extra_tags=("bvg_worker",),
+                         offers=[("emerald 2", "diamond 1"),
+                                 ("wheat 20", "emerald 1")])
+    world.set_ai(cap, "bvg_probe", True)
+    world.set_ai(cap, "bvg_probe", False)
+    cap.cmds.append(guide.book_command(NONE, "Летопис на BVG WORLD",
+                                       "Режисьорът", ["Глава 1", "Глава 2"]))
     for key in ("keeper", "builder", "trickster", "trader"):
         world.spawn_npc(cap, key, (0.5, 300, 0.5), 0)
         cap.cmds.append(f"kill @e[tag=bvg_{key}]")
@@ -333,6 +369,7 @@ def catalog(api):
         check("Състезания", f"{key} ({p['title']})", ok, r)
 
     # 6) Режисьорът: всички видове действия
+    quests_mod.FILE = "probe_quests.json"      # да не пипаме истинските
     cap = Capture()
     fake = types.SimpleNamespace()
     fake.s = cap
@@ -350,16 +387,143 @@ def catalog(api):
     fake.start_event = lambda k, source="": fake.engine.start(k)
     fake.tell_admin = lambda *a, **k: None
     fake.cache_positions = lambda info: None
+    fake._save_players = lambda: None
+    fake._ai_ready = lambda: False
+    fake.pos = {}
     d = director_mod.Director(fake)
+    fake.director = d
+    fake.fame = fame_mod.Fame(cap, fake)
+    fake.quests = quests_mod.Quests(cap, fake)
+    fake.visits = spirits_mod.Visits(fake)
     director_mod.MAX_ACTIONS = 30
     plan = gm_plan(["Probe_1", "Probe_2"])
     done = d.execute(plan)
+    wait(lambda: not fake.visits.busy, 10, 0.2)
+    fake.visits.leave()
+    fake.engine.stop()
+    d.execute({"actions": [{"type": "boss", "near": "Probe_1", "spec": {
+        "name": "Тестов бос", "mob": "husk", "scale": 2, "hp": 200,
+        "armor": ["golden_helmet"], "weapon": "iron_sword",
+        "minions": {"mob": "zombie", "count": 2}, "taunts": ["Ха!"]}}]})
     fake.engine.stop()
     n, bad = validate(s, "режисьор", cap.cmds,
                       {"Probe_1": NONE, "Probe_2": NONE})
     check("Режисьор", f"всички видове действия ({len(done)} изпълнени, "
-                      f"{n} команди)", len(done) >= 10 and not bad,
+                      f"{n} команди)", len(done) >= 13 and not bad,
           (done, bad[:3]))
+
+    # 7) Живият свят: слава, задачи, гости, босове, търговия
+    living_catalog(s)
+    quests_mod.FILE = "quests.json"
+
+
+def living_catalog(s):
+    sec = "Живият свят (команди)"
+    subst = {"Probe_1": NONE, "Probe_2": NONE}
+    cap = Capture()
+    fake = types.SimpleNamespace(s=cap, players={}, _save_players=lambda: None,
+                                 server=types.SimpleNamespace(online=set()))
+    fake.player = lambda n: fake.players.setdefault(n, {})
+    fake.director = types.SimpleNamespace(note=lambda *a, **k: None)
+    f = fame_mod.Fame(cap, fake)
+    f.setup()
+    f.add("Probe_1", 60, "проба")
+    f.add("Probe_1", 2000, "проба")
+    n, bad = validate(s, "слава", cap.cmds, subst)
+    check(sec, f"слава и рангове ({n})", not bad, bad[:3])
+
+    # всяка задача, която селяните или сагите дават, и наградите
+    cmds = []
+    wants = [w for lst in quests_mod.VILLAGER_WANTS.values() for w in lst]
+    for kind, target, amount, reward in wants:
+        if kind in quests_mod.CRITERIA:
+            crit = quests_mod.CRITERIA[kind].format(t=target)
+            cmds += [f"scoreboard objectives add bvgq {crit}",
+                     "scoreboard objectives remove bvgq"]
+        elif kind == "collect":
+            cmds += [f"execute if items entity {NONE} container.* "
+                     f"minecraft:{target}",
+                     f"clear {NONE} minecraft:{target} {amount}"]
+        for r in reward:
+            it, cnt = world.item_spec(r)
+            cmds.append(f"give {NONE} minecraft:{it} {cnt}")
+    for saga in director_mod.SAGAS:
+        for ch in saga["chapters"]:
+            for step in ch["do"]:
+                if step[0] == "quest_all":
+                    if step[1] in quests_mod.CRITERIA:
+                        crit = quests_mod.CRITERIA[step[1]].format(t=step[2])
+                        cmds += [f"scoreboard objectives add bvgq {crit}",
+                                 "scoreboard objectives remove bvgq"]
+                    else:
+                        cmds.append(f"execute if items entity {NONE} "
+                                    f"container.* minecraft:{step[2]}")
+                    for r in step[4]:
+                        it, cnt = world.item_spec(r)
+                        cmds.append(f"give {NONE} minecraft:{it} {cnt}")
+    # търговията на селяните и Мара, подаръците на духовете
+    pairs = [o for lst in villages_mod.PROF_OFFERS.values() for o in lst]
+    pairs += list(spirits_mod.TRADES)
+    for b, sl in pairs:
+        for spec in (b, sl):
+            it, cnt = world.item_spec(spec)
+            cmds.append(f"give {NONE} minecraft:{it} {cnt}")
+    for g in spirits_mod.GIFTS:
+        it, cnt = world.item_spec(g)
+        cmds.append(f"give {NONE} minecraft:{it} {cnt}")
+    n, bad = validate(s, "задачи и търговия", cmds)
+    check(sec, f"задачи, награди, сделки ({n})", not bad, bad[:3])
+
+    # задачите през истинския код (създаване, проверка, предаване)
+    cap = Capture()
+    fake.s = cap
+    fake.fame = fame_mod.Fame(cap, fake)
+    fake.server = types.SimpleNamespace(online={"Probe_1"})
+    q = quests_mod.Quests(cap, fake)
+    q.items = []
+    for kind, target in (("kill", "zombie"), ("mine", "coal_ore"),
+                         ("craft", "bread"), ("collect", "wheat")):
+        ok, msg = q.give("Probe_1", kind, target, 1, title="проба",
+                         reward=["emerald 1"], fame=5)
+        if not ok:
+            BAD.append(("задача " + kind, target, msg))
+    q.give("Probe_1", "visit", at=[10, 10], fame=5)
+    q.next_check = 0
+    q.tick({"Probe_1": (10.5, 70.0, 10.5)}, {})
+    n, bad = validate(s, "задачи (код)", cap.cmds, subst)
+    check(sec, f"задачи от кода ({n})", not bad, bad[:3])
+
+    # гостите: всеки дух със сделки
+    cap = Capture()
+    fake.s = cap
+    fake.b = fake
+    v = spirits_mod.Visits(types.SimpleNamespace(s=cap, cfg={}, pos={}))
+    for key in ("keeper", "builder", "trickster", "trader"):
+        v._summon(key, "Probe_1", f"bvg_{key}_v",
+                  v._offers(None) if key == "trader" else None)
+        world.bubble_tag(cap, f"bvg_{key}_v", "проба", 2.4)
+        v.active = {"key": key, "tag": f"bvg_{key}_v"}
+        v.leave()
+    n, bad = validate(s, "гости", cap.cmds, subst)
+    check(sec, f"гости-духове и търговия ({n})", not bad, bad[:3])
+
+    # босовете: всеки готов и един измислен
+    cap = Capture()
+    eng = events_lib.Engine(cap, {"chaos": 2}, lambda: {"Probe_1"})
+    for spec in events_lib.BOSS_PRESETS + [{"name": "Странен", "mob": "blaze",
+                                            "armor": ["diamond_boots"],
+                                            "minions": {"mob": "vex"}}]:
+        ok, msg = eng.start_boss(spec, "Probe_1")
+        if eng.active:
+            eng.active.tick()
+            eng.active.phase = 1
+            eng.active._minions(1)
+            eng.active.finish("Probe_1")
+        eng.stop()
+        if not ok:
+            BAD.append(("бос", spec["name"], msg))
+    n, bad = validate(s, "босове", cap.cmds, subst)
+    check(sec, f"босове ({n})", not bad, bad[:3])
 
 
 def gm_plan(names):
@@ -389,6 +553,13 @@ def gm_plan(names):
             f"execute at {p} run particle minecraft:heart ~ ~2 ~ 1 1 1 0 10",
             f"give {p} minecraft:bread 3",
             "op " + p, "kill @a"]},
+        {"type": "quest", "player": p, "kind": "kill", "target": "skeleton",
+         "amount": 2, "title": "Кости", "reward": ["emerald 2"], "fame": 15},
+        {"type": "fame", "player": q, "points": 25, "reason": "проба"},
+        {"type": "spirit", "key": "trader", "player": p},
+        {"type": "story", "title": "Тестова сага", "chapter": 1,
+         "goal": "проверка"},
+        {"type": "chronicle", "text": "Режисьорът проверява всичко."},
     ], "next_in_minutes": 10}
 
 
@@ -443,6 +614,10 @@ def players_phase(api, version):
 def _players(api, bots, names):
     s, srv, br = api._sender, api._server, api._brain
     br.director.next_at = time.time() + 10 ** 6     # само когато ние кажем
+    director_mod.MIN_GAP = 10 ** 6
+    br.visits.next_at = time.time() + 10 ** 6        # гостите — накрая
+    br.villages.next_auto = time.time() + 10 ** 6    # селата сами — накрая
+    api._cfg.data["villager_quests"] = False
     sec = "Играчи"
     ok = wait(lambda: bots.spawned() >= set(names), 120)
     check(sec, "ботовете влязоха", ok, [e for e in bots.events
@@ -576,8 +751,10 @@ def _players(api, bots, names):
         api.stop_event()
         time.sleep(0.5)
         check("Събития с играчи", key, r.get("ok"), r)
-    s.query("kill @e[tag=bvg_undead]")
-    s.query("kill @e[tag=bvg_giant]")
+    s.query_many(["kill @e[tag=bvg_undead]", "kill @e[tag=bvg_giant]",
+                  "kill @e[tag=bvg_blood]", "kill @e[tag=bvg_raid]",
+                  "kill @e[tag=bvg_boss]", "kill @e[tag=bvg_minion]",
+                  "time set 1000", "weather clear 6000"])
     syn = [x for x in list(s.rejected)[before:] if x[1] == "syntax"]
     check("Събития с играчи", "сървърът разбира всичко", not syn, syn[:3])
 
@@ -612,7 +789,16 @@ def _players(api, bots, names):
     GM_PLANS.append(gm_plan(["Ivan_99", "Mia"]))
     before = len(s.rejected)
     ok, msg = br.director.think("тест", wait=True)
-    check("Режисьор", "изпълни плана", ok and "награда" in msg, msg)
+    check("Режисьор", "изпълни плана", ok and "награда" in msg and
+          "задача" in msg and "слава" in msg, msg)
+    check("Режисьор", "историята е записана",
+          br.director.story.get("title") == "Тестова сага" and
+          any("проверява" in t for _, t in br.director.story["chronicle"]),
+          br.director.story)
+    check("Режисьор", "прати Мара при играч", wait(
+        lambda: "passed" in s.query("execute if entity @e[tag=bvg_trader_v]")
+        [1].lower(), 15))
+    br.visits.leave()
     check("Режисьор", "играчите виждат репликата",
           wait(lambda: bots.got("BVG", "Проба от режисьора"), 10))
     check("Режисьор", "наградата стигна", wait(lambda: "passed" in s.query(
@@ -645,10 +831,248 @@ def _players(api, bots, names):
     r = api.quick("survival", "Mia")
     check("Конзола", "бърза команда", r.get("ok"), r)
 
+    living(api, bots, names)
+
     # пълна проверка
     d = api.diagnose()
     bad = [c for c in d["checks"] if c["ok"] is False]
     check("Пълна проверка", f"{len(d['checks'])} проверки", not bad, bad)
+
+
+def _count(reply):
+    m = re.search(r"count:\s*(\d+)", reply or "", re.I)
+    return int(m.group(1)) if m else 0
+
+
+def living(api, bots, names):
+    """Живият свят с истински играчи: слава, задачи, босове, гости, села."""
+    s, srv, br = api._sender, api._server, api._brain
+    sec = "Живият свят"
+    s.query_many(["effect give @a minecraft:resistance 1200 4 true",
+                  "effect give @a minecraft:saturation 1200 1 true",
+                  "time set 1000", "weather clear 6000"])
+    br._refresh_positions()
+
+    # --- слава и рангове ---
+    br.fame.add("Mia", 60, "тест")
+    pts = br.fame.points("Mia")
+    r = s.query("scoreboard players get Mia slava")[1]
+    check(sec, "слава в TAB", f"has {pts}" in r, (pts, r))
+    idx = fame_mod.rank_of(pts)
+    check(sec, f"ранг „{fame_mod.RANKS[idx][1]}“ като отбор", "passed" in s.query(
+        f"execute if entity @a[name=Mia,team=bvg_r{idx}]")[1].lower(), idx)
+    # чатът идва с представката на ранга — трябва да се разчете името
+    TALKS.clear()
+    bots.cmd(bot="Mia", chat="Пазителю, здравей!")
+    check(sec, "чат с ранг: името е разпознато",
+          wait(lambda: ("Пазителят", "Mia") in TALKS, 15), TALKS)
+    check(sec, "чат с ранг: отговорът стига",
+          wait(lambda: bots.got("BVG", "страннико от далечни"), 15))
+    bots.cmd(bot="Mia", chat="!слава")
+    check(sec, "!слава в играта", wait(lambda: bots.got("Mia", "Класация"),
+                                        10))
+
+    # --- задача: убий (статистиката на играта) ---
+    for q in list(br.quests.items):
+        br.quests._drop(q)
+    f0 = br.fame.points("Ivan_99")
+    ok, msg = br.quests.give("Ivan_99", "kill", "zombie", 1, title="Зомби",
+                             reward=["emerald 2"], fame=10)
+    check(sec, "задача „убий“ дадена", ok and wait(
+        lambda: bots.got("Ivan_99", "Задача"), 10), msg)
+    s.query_many(["execute at Ivan_99 run summon zombie ~3 ~ ~ "
+                  '{Tags:["bvg_qtest"],PersistenceRequired:1b}',
+                  "damage @e[tag=bvg_qtest,limit=1] 100 "
+                  "minecraft:player_attack by Ivan_99"])
+    done = wait(lambda: not any(q["player"] == "Ivan_99"
+                                for q in br.quests.items), 25)
+    check(sec, "убийството е засечено -> задачата е изпълнена", done,
+          (br.quests.status(), s.query("scoreboard players get Ivan_99 " +
+                                       (br.quests.items[0]["obj"]
+                                        if br.quests.items else "x"))))
+    check(sec, "награда и слава за задачата", done and _count(s.query(
+        "execute if items entity Ivan_99 container.* minecraft:emerald")[1])
+        >= 2 and br.fame.points("Ivan_99") >= f0 + 10, br.fame.points("Ivan_99"))
+    s.query("kill @e[tag=bvg_qtest]")
+
+    # --- задача от селянин: донеси, предава се при него ---
+    w0 = next((w for w in br.villages.workers if w.get("pos")
+               and not w.get("_job")), None)
+    if w0:
+        giver = {"name": w0["name"], "color": "yellow", "kind": "villager",
+                 "ref": f"w{w0['id']}"}
+        ok, msg = br.quests.give("Mia", "collect", "wheat", 3,
+                                 reward=["bread 2"], fame=8, giver=giver)
+        s.query("give Mia minecraft:wheat 5")
+        check(sec, "„донеси“: брои донесеното",
+              ok and wait(lambda: any(q["player"] == "Mia" and
+                                      q.get("progress") == 5
+                                      for q in br.quests.items) or
+                          not any(q["player"] == "Mia"
+                                  for q in br.quests.items), 15),
+              br.quests.status())
+        br.villages.refresh_positions()
+        s.query(f"tp Mia @e[tag=bvg_w{w0['id']},limit=1]")
+        done = wait(lambda: not any(q["player"] == "Mia"
+                                    for q in br.quests.items), 30)
+        check(sec, "„донеси“: при селянина -> взима житото и награждава",
+              done and _count(s.query("execute if items entity Mia "
+                                      "container.* minecraft:wheat")[1]) == 2,
+              (br.quests.status(), w0.get("pos"), br.pos.get("Mia")))
+
+    # --- бос ---
+    api.stop_event()
+    f_mia = br.fame.points("Mia")
+    r = api.boss("Ivan_99", events_lib.BOSS_PRESETS[0]["name"])
+    alive = wait(lambda: "passed" in s.query(
+        "execute if entity @e[tag=bvg_boss]")[1].lower(), 10)
+    check(sec, "бос: появи се", r.get("ok") and alive, r)
+    hp = events_lib.BOSS_PRESETS[0]["hp"]
+    r1 = s.query("attribute @e[tag=bvg_boss,limit=1] minecraft:max_health "
+                 "get")[1]
+    r2 = s.query("attribute @e[tag=bvg_boss,limit=1] minecraft:scale get")[1]
+    check(sec, "бос: живот и размер", str(hp) in r1 and "2.6" in r2, (r1, r2))
+    check(sec, "бос: броня", "passed" in s.query(
+        "execute if items entity @e[tag=bvg_boss,limit=1] armor.head "
+        "minecraft:netherite_helmet")[1].lower())
+    rb = s.query("bossbar get bvg:boss max")[1]
+    check(sec, "бос: лентата е на екрана", str(hp) in rb, rb)
+    check(sec, "бос: слуги", "passed" in s.query(
+        "execute if entity @e[tag=bvg_minion]")[1].lower())
+    s.query(f"damage @e[tag=bvg_boss,limit=1] {int(hp * 0.6)} "
+            f"minecraft:player_attack by Mia")
+    check(sec, "бос: втора фаза", wait(
+        lambda: getattr(br.engine.active, "phase", 0) >= 2, 12),
+        s.query("data get entity @e[tag=bvg_boss,limit=1] Health"))
+    s.query("damage @e[tag=bvg_boss,limit=1] 5000 minecraft:player_attack "
+            "by Mia")
+    won = wait(lambda: br.engine.last_result and
+               br.engine.last_result[1] == "Mia", 15)
+    check(sec, "бос: убиецът (с ранг в името) е засечен", won,
+          (br.engine.last_result, list(srv.recent)[-6:]))
+    check(sec, "бос: слава за победата", br.fame.points("Mia") >= f_mia + 60,
+          br.fame.points("Mia") - f_mia)
+    check(sec, "бос: лентата и слугите се махат", wait(
+        lambda: "passed" not in s.query(
+            "execute if entity @e[tag=bvg_minion]")[1].lower() and
+        "no bossbar" in s.query("bossbar get bvg:boss max")[1].lower(), 10),
+        s.query("bossbar get bvg:boss max"))
+    api.stop_event()
+
+    # --- гости: Мара с истински сделки, говорене без име ---
+    r = api.spirit_visit("trader", "Mia")
+    here = wait(lambda: br.visits.active and not br.visits.busy and
+                "passed" in s.query("execute if entity @e[tag=bvg_trader_v]")
+                [1].lower(), 15)
+    check(sec, "гост: Мара дойде при Mia", r.get("ok") and here, r)
+    check(sec, "гост: репликата стига", wait(
+        lambda: bots.got("Mia", "Стока за теб"), 10))
+    off = s.query("data get entity @e[tag=bvg_trader_v,limit=1] "
+                  "Offers.Recipes")[1]
+    check(sec, "гост: истински сделки (без command_block)",
+          "diamond" in off and "command_block" not in off, off[:300])
+    br._refresh_positions()
+    br.last_talk.clear()
+    TALKS.clear()
+    bots.cmd(bot="Mia", chat="колко струва това?")
+    check(sec, "гост: чува играча до себе си без име",
+          wait(lambda: bots.got("Mia", "Евтино е"), 15), TALKS)
+    r = api.spirit_visit("keeper", "BVG")
+    wait(lambda: br.visits.active and br.visits.active["key"] == "keeper"
+         and not br.visits.busy, 15)
+    check(sec, "гост: Пазителят даде задача", any(
+        q["giver"]["name"] == "Пазителят" and q["player"] == "BVG"
+        for q in br.quests.items), br.quests.status())
+    check(sec, "гост: и подарък", wait(lambda: _count(s.query(
+        "execute if items entity BVG container.* minecraft:bread")[1]) >= 2,
+        10))
+    br.visits.leave()
+    check(sec, "гост: тръгва си", wait(lambda: "passed" not in s.query(
+        "execute if entity @e[tag=bvg_keeper_v]")[1].lower(), 8))
+
+    # --- свободните селяни се разхождат и търгуват ---
+    free = [w for w in br.villages.workers if not w.get("_job")]
+    if free:
+        w = free[0]
+        r = s.query(f"data get entity @e[tag=bvg_w{w['id']},limit=1] NoAI")[1]
+        check(sec, "свободният селянин се движи сам (NoAI 0)", "0b" in r, r)
+        r = s.query(f"data get entity @e[tag=bvg_w{w['id']},limit=1] "
+                    f"Offers.Recipes")[1]
+        check(sec, "селянинът търгува", "emerald" in r, r[:200])
+        # селянин сам дава задача на играч до него
+        api._cfg.data["villager_quests"] = True
+        for q in list(br.quests.items):
+            if q["player"] == "BVG":
+                br.quests._drop(q)
+        br.villages._q_player, br.villages._q_worker = {}, {}
+        s.query(f"tp BVG @e[tag=bvg_w{w['id']},limit=1]")
+        br.slow_at = 0
+        got = wait(lambda: any(q["player"] == "BVG" and
+                               q["giver"].get("kind") == "villager"
+                               for q in br.quests.items), 40)
+        check(sec, "селянин сам дава задача", got, br.quests.status())
+        bots.cmd(bot="BVG", chat="!задачи")
+        check(sec, "!задачи в играта", wait(
+            lambda: bots.got("BVG", "📜"), 10))
+
+    # --- постройка по чертеж от режисьора ---
+    GM_PLANS.append({"thought": "арена", "actions": [{
+        "type": "design", "near": "BVG", "name": "Малка арена",
+        "size": [7, 4, 7], "ops": [
+            ["fill", 0, 0, 0, 6, 0, 6, "stone_bricks"],
+            ["fill", 0, 1, 0, 6, 1, 0, "cobblestone_wall"],
+            ["fill", 0, 1, 6, 6, 1, 6, "cobblestone_wall"],
+            ["fill", 0, 1, 0, 0, 1, 6, "cobblestone_wall"],
+            ["set", 3, 1, 3, "lantern"], ["set", 1, 1, 1, "tnt"]]}]})
+    ok, msg = br.director.think("тест", wait=True)
+    check(sec, "чертеж от режисьора: селянин пое", ok and "постройка" in msg,
+          msg)
+    started = wait(lambda: any(w.get("_job") and w["_job"].kind == "design"
+                               for w in br.villages.workers), 60)
+    if started:
+        w = next(w for w in br.villages.workers
+                 if w.get("_job") and w["_job"].kind == "design")
+        job = w["_job"]
+        fin = wait(lambda: not w.get("_job"), 120, 1)
+        ratio, n, miss = blueprint_match(s, job) if fin else (0, 0, [])
+        check(sec, f"чертеж: построен по плана ({int(ratio * 100)}% от {n})",
+              fin and ratio >= 0.97, miss)
+    else:
+        check(sec, "чертеж: построен", False, br.villages.status())
+
+    # --- ново село само ---
+    nv = len(br.villages.villages)
+    s.query("execute as Ivan_99 at @s run tp @s ~400 ~ ~")
+    time.sleep(4)
+    br._refresh_positions()
+    br.villages.STAY = 6
+    br.villages._anchor = {}
+    br.villages.next_auto = 0
+    br.slow_at = 0
+    ok = wait(lambda: len(br.villages.villages) > nv, 120, 1)
+    check(sec, "ново село само, щом някой се задържи", ok,
+          (br.villages.status(), br.pos.get("Ivan_99"), br.dims))
+
+    # --- гостите идват сами ---
+    br.visits.leave()
+    br.visits.next_at = 0
+    came = wait(lambda: br.visits.active is not None, 30)
+    check(sec, "дух идва сам при играч", came, br.visits.status())
+    br.visits.leave()
+    br.visits.next_at = time.time() + 10 ** 6
+
+    # --- летопис ---
+    before = _count(s.query("execute if items entity Mia container.* "
+                            "minecraft:written_book")[1])
+    bots.cmd(bot="Mia", chat="!летопис")
+    check(sec, "!летопис дава книга", wait(lambda: _count(s.query(
+        "execute if items entity Mia container.* minecraft:written_book")
+        [1]) > before, 10))
+    st = api.state()
+    check(sec, "таблото вижда историята, задачите, славата, гостите",
+          st["story"]["title"] and isinstance(st["quests"]["active"], list)
+          and st["fame"] and st["visits"]["recent"], {k: st.get(k) for k in
+                                                      ("story", "fame")})
 
 
 def main():

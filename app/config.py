@@ -55,13 +55,17 @@ DEFAULTS = {
     "workers_enabled": True,       # селяни, които строят
     "village_auto": True,          # режисьорът сам основава села
     "build_cooldown": 15,          # минути между строежи за един играч
+    "spirits_roam": True,          # духовете идват сами при играчите
+    "villager_quests": True,       # селяните дават задачи
+    "gm_period": 120,              # на колко секунди режисьорът мисли
+    "cfg_rev": 2,                  # версия на настройките (за миграции)
 }
 
 # Стойности по подразбиране от стари версии, които вече не работят
 _STALE = {"gemini_model": ("gemini-2.5-flash", "gemini-2.0-flash",
                            "gemini-2.5-flash-lite", "gemini-1.5-flash", ""),
           "openai_model": ("gpt-4o-mini", ""),
-          "ai_provider": ("gemini", "")}
+          "ai_provider": ("",)}
 
 SECRETS = ("gemini_key", "openai_key", "groq_key", "mistral_key",
            "openrouter_key", "cerebras_key", "rcon_password")
@@ -77,16 +81,22 @@ class Config:
             self.save()
 
     def load(self):
+        saved = {}
         try:
             with open(paths.CONFIG, encoding="utf-8") as f:
                 saved = json.load(f)
             for k, v in saved.items():
                 self.data[k] = v
-        except (OSError, json.JSONDecodeError):
-            pass
+        except (OSError, json.JSONDecodeError, AttributeError):
+            saved = {}
         for k, old in _STALE.items():
             if self.data.get(k) in old:
                 self.data[k] = "auto"
+        if saved and int(saved.get("cfg_rev") or 1) < 2:
+            # до версия 2 имаше само Gemini/OpenAI; сега „auto" ползва
+            # всички ключове заедно
+            self.data["ai_provider"] = "auto"
+            self.data["cfg_rev"] = 2
 
     def save(self):
         with self._lock:

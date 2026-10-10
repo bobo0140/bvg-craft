@@ -226,7 +226,7 @@ input:focus, select:focus { border-color: var(--muted); outline: none; }
   color: var(--faint); font: 500 13px/1 var(--body); }
 .link-danger:hover { color: var(--red); }
 .spirit .calls { color: var(--muted); font-size: 13px; margin: 4px 0 0; }
-.spirit .row { display: flex; gap: 8px; }
+.spirit .row { display: flex; flex-wrap: wrap; gap: 8px; }
 .spirit select { flex: 1; min-width: 140px; }
 
 /* ---------- събития ---------- */
@@ -399,6 +399,55 @@ h2.sub { margin: 30px 0 6px; color: var(--parchment); font-size: 17px; }
 .workers .meter i { display: block; height: 100%; background: var(--gold); }
 .workers li.empty { display: block; color: var(--faint); }
 
+/* ---------- историята и живият свят ---------- */
+.saga { margin-top: 18px; border-top: 3px solid var(--purple); }
+.saga-head { display: flex; justify-content: space-between; align-items: start; gap: 20px; }
+.saga-head h2 { margin-bottom: 4px; }
+.saga-head .btn { flex: none; }
+.saga-title { font: 700 24px/1.2 var(--pixel); color: var(--purple); margin: 0 0 4px; }
+.chron { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 4px; }
+.chron:empty { display: none; }
+.chron li { display: grid; grid-template-columns: 96px 1fr; gap: 12px; font-size: 13.5px; }
+.chron .when { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.split.three { grid-template-columns: repeat(3, 1fr); margin-top: 18px; }
+.feed, .fame { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 13.5px; }
+.feed li { line-height: 1.4; }
+.feed li.live { color: var(--green); }
+.feed li.done { color: var(--muted); }
+.feed small { color: var(--faint); margin-left: 4px; }
+.feed .say { display: block; color: var(--muted); font-size: 12.5px; }
+.feed .link-danger { font-size: 12px; margin-left: 6px; }
+.fame li:not(.empty) { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: baseline; }
+.fame .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.fame b { font-variant-numeric: tabular-nums; }
+.rank { font-size: 11.5px; padding: 1px 6px; border-radius: 2px; background: var(--stone-600); }
+.r-gray { color: var(--muted); } .r-green { color: var(--green); } .r-aqua { color: var(--aqua); }
+.r-gold { color: var(--gold); } .r-light_purple { color: var(--purple); }
+.tag.rank { background: color-mix(in srgb, var(--purple) 18%, var(--stone-700)); color: var(--purple); }
+.ev.boss { border-top: 3px solid var(--red); }
+.ev.boss span { color: var(--red); }
+.boss-row { margin: 14px 0; }
+.boss-row select { width: auto; min-width: 180px; }
+
+/* ---------- AI услуги ---------- */
+.provs { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.prov { background: var(--stone-800); border-radius: var(--r-md); padding: 14px 16px; display: grid; gap: 8px;
+  border-left: 3px solid var(--stone-500); }
+.prov:has(.pstate.ok) { border-left-color: var(--green); }
+.prov:has(.pstate.bad) { border-left-color: var(--red); }
+.prov-head { display: flex; align-items: center; gap: 8px; }
+.prov-head b { font-size: 15px; }
+.tag.free { background: color-mix(in srgb, var(--green) 18%, var(--stone-700)); color: var(--green); }
+.pstate { margin-left: auto; font-size: 12px; color: var(--faint); }
+.pstate.ok { color: var(--green); }
+.pstate.bad { color: var(--red); }
+.pnote { margin: 0; color: var(--muted); font-size: 13px; }
+.prow { display: flex; gap: 8px; align-items: center; }
+.prow input { flex: 1; min-width: 0; }
+.prow .btn { flex: none; }
+.pinfo { word-break: break-word; }
+.ai-tests { grid-column: 1 / -1; }
+
 /* ---------- съобщение ---------- */
 .toast {
   position: fixed; right: 28px; bottom: 28px; max-width: 420px;
@@ -412,12 +461,13 @@ h2.sub { margin: 30px 0 6px; color: var(--parchment); font-size: 17px; }
 
 @media (max-width: 1180px) {
   .banners, .health { grid-template-columns: repeat(2, 1fr); }
+  .split.three { grid-template-columns: 1fr 1fr; }
   .event-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 860px) {
   .shell { grid-template-columns: 1fr; }
   .rail { flex-direction: row; overflow-x: auto; }
-  .split, .form, .spirits, .checks, .toggles, .world-pick { grid-template-columns: 1fr; }
+  .split, .split.three, .form, .spirits, .checks, .toggles, .world-pick, .provs { grid-template-columns: 1fr; }
   .term { height: 50vh; }
   .roster li { grid-template-columns: 26px 1fr; }
   .roster .row-actions { grid-column: 1 / -1; flex-wrap: wrap; }

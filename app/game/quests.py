@@ -73,12 +73,46 @@ THANKS = ["Благодаря ти, {p}! Ето обещаното.", "Ха! З�
           "Честна работа, честна награда. Благодаря, {p}!"]
 
 
-def _obj(criterion):
-    return "q" + hashlib.md5(criterion.encode()).hexdigest()[:10]
+# Имената на български — за да не пише „12 × wheat"
+BG = {"wheat": "жито", "carrot": "моркови", "potato": "картофи",
+      "pumpkin": "тикви", "melon_slice": "парчета диня", "bone_meal": "костно брашно",
+      "sugar_cane": "захарна тръстика", "cobblestone": "павета",
+      "stone": "камък", "stone_bricks": "каменни тухли", "iron_ingot": "железни кюлчета",
+      "gold_ingot": "златни кюлчета", "copper_ingot": "медни кюлчета",
+      "diamond": "диаманта", "emerald": "изумруда", "coal": "въглища",
+      "coal_ore": "руда на въглища", "iron_ore": "желязна руда",
+      "deepslate_iron_ore": "желязна руда", "diamond_ore": "диамантена руда",
+      "clay_ball": "топки глина", "paper": "листа хартия", "glass_pane": "стъкла",
+      "glass": "стъкло", "oak_log": "дъбови трупи", "spruce_log": "смърчови трупи",
+      "birch_log": "брезови трупи", "logs": "трупи", "leather": "кожи",
+      "string": "конци", "bread": "хляба", "apple": "ябълки", "egg": "яйца",
+      "feather": "пера", "bone": "кости", "arrow": "стрели",
+      "rotten_flesh": "гнило месо", "gunpowder": "барут", "torch": "факли",
+      "wool": "вълна", "white_wool": "бяла вълна", "sand": "пясък",
+      "gravel": "чакъл", "dirt": "пръст", "flint": "кремъци",
+      "redstone": "червен камък", "lapis_lazuli": "лапис",
+      "ender_pearl": "перли на Края", "blaze_rod": "огнени пръчки",
+      "zombie": "зомбита", "skeleton": "скелета", "spider": "паяка",
+      "creeper": "крийпъра", "enderman": "ендърмена", "slime": "слузести",
+      "witch": "вещици", "pillager": "разбойника", "drowned": "удавници",
+      "husk": "изсъхнали зомбита", "stray": "скитащи скелета",
+      "cow": "крави", "pig": "прасета", "sheep": "овце", "chicken": "кокошки",
+      "crafting_table": "работни маси", "furnace": "пещи", "chest": "сандъка",
+      "iron_pickaxe": "железни кирки", "shield": "щита", "bucket": "кофи",
+      "cake": "торти", "cookie": "курабийки", "honey_bottle": "бурканчета мед"}
+
+
+def bg(item):
+    t = _short(item)
+    return BG.get(t, t.replace("_", " "))
 
 
 def _short(item):
     return str(item or "").replace("minecraft:", "").lstrip("#")
+
+
+def _obj(criterion):
+    return "q" + hashlib.md5(criterion.encode()).hexdigest()[:10]
 
 
 class Quests:
@@ -173,7 +207,7 @@ class Quests:
                 t = t.lstrip("#")              # за статистиките — без тагове
             q["target"] = t if (t.startswith("#") or ":" in t) else \
                 "minecraft:" + t
-            label = f"{amount} × {_short(t)}"
+            label = f"{amount} × {bg(t)}"
             if kind in CRITERIA:
                 crit = CRITERIA[kind].format(t=_short(t))
                 q["criterion"] = crit
@@ -284,7 +318,7 @@ class Quests:
             q["progress"] = have
             if not done:
                 world.actionbar(self.s, q["player"],
-                                f"{KIND_TEXT[q['kind']]} {_short(q.get('target'))}"
+                                f"{KIND_TEXT[q['kind']]} {bg(q.get('target'))}"
                                 f": {min(have, q['amount'])}/{q['amount']}",
                                 "yellow")
         if not done:

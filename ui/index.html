@@ -63,6 +63,33 @@
         </div>
       </div>
 
+      <div class="panel saga">
+        <div class="saga-head">
+          <div>
+            <h2>Историята</h2>
+            <p class="saga-title" id="sagaTitle">Още не е започнала</p>
+            <p class="lede small" id="sagaGoal">Режисьорът ще я измисли, щом някой влезе.</p>
+          </div>
+          <button class="btn btn-ghost btn-sm" id="sagaReset" type="button">Нова история</button>
+        </div>
+        <ul class="chron" id="chronList"></ul>
+      </div>
+
+      <div class="split three">
+        <div class="panel">
+          <h2>Духовете обикалят</h2>
+          <ul class="feed" id="visitFeed"><li class="empty">Още никой не е идвал.</li></ul>
+        </div>
+        <div class="panel">
+          <h2>Задачи</h2>
+          <ul class="feed" id="questFeed"><li class="empty">Няма задачи.</li></ul>
+        </div>
+        <div class="panel">
+          <h2>Слава</h2>
+          <ol class="fame" id="fameList"><li class="empty">Още никой няма слава.</li></ol>
+        </div>
+      </div>
+
       <div class="panel gm">
         <div class="gm-head">
           <div>
@@ -247,7 +274,7 @@
     <section class="view" id="view-spirits">
       <header class="view-head">
         <h1>Духовете</h1>
-        <p class="lede">Четири създания с изкуствен разум. Застани някъде в играта и ги призови до себе си.</p>
+        <p class="lede">Четири създания с изкуствен разум. Обикалят света сами и идват при играчите — с задачи, подаръци, номера и търговия. Можеш да пратиш някого веднага или да го поставиш на постоянно място.</p>
       </header>
       <div class="spirits" id="spirits"></div>
     </section>
@@ -256,7 +283,7 @@
     <section class="view" id="view-villages">
       <header class="view-head">
         <h1>Села</h1>
-        <p class="lede">Селяните строят блок по блок, само на равно, сухо и празно място — никога върху чужда постройка, дърво или вода. Селата растат сами, докато някой е наблизо.</p>
+        <p class="lede">Ако някой се задържи на едно място, селяни идват сами и вдигат село. Строят блок по блок, само на равно, сухо и празно място. Свободните се разхождат, търгуват и дават задачи.</p>
       </header>
       <div class="panel build">
         <div class="build-row">
@@ -275,7 +302,7 @@
         </div>
         <div class="toggles">
           <label class="toggle"><input type="checkbox" id="workers_enabled"><span></span>Селяните работят</label>
-          <label class="toggle"><input type="checkbox" id="village_auto"><span></span>Селата растат сами и режисьорът основава нови</label>
+          <label class="toggle"><input type="checkbox" id="village_auto"><span></span>Нови села се появяват сами и растат</label>
         </div>
       </div>
       <div class="vgrid" id="villageList"></div>
@@ -291,7 +318,9 @@
         <p class="lede">Режисьорът пуска изненади сам. Можеш и ти.</p>
       </header>
       <div class="gm-settings">
-        <label class="toggle"><input type="checkbox" id="gm_enabled"><span></span>AI режисьорът решава какво да се случи</label>
+        <label class="toggle"><input type="checkbox" id="gm_enabled"><span></span>AI режисьорът води историята</label>
+        <label class="toggle"><input type="checkbox" id="spirits_roam"><span></span>Духовете идват сами при играчите</label>
+        <label class="toggle"><input type="checkbox" id="villager_quests"><span></span>Селяните дават задачи</label>
         <div class="field">
           <label for="gm_power">Колко може режисьорът</label>
           <select id="gm_power">
@@ -307,14 +336,23 @@
         <p class="chaos-note" id="chaosNote"></p>
       </div>
       <div class="field narrow">
-        <label for="director_minutes">Изненада на всеки</label>
-        <select id="director_minutes" data-type="int">
-          <option value="4">4 минути</option><option value="8">8 минути</option>
-          <option value="12">12 минути</option><option value="20">20 минути</option>
+        <label for="gm_period">Режисьорът мисли на всеки</label>
+        <select id="gm_period" data-type="int">
+          <option value="60">1 минута</option><option value="120">2 минути</option>
+          <option value="180">3 минути</option><option value="300">5 минути</option>
+          <option value="600">10 минути</option>
         </select>
+        <small>И веднага, щом стане нещо важно. „Хаос“ го прави по-чест, „Леко“ — по-рядък.</small>
       </div>
       <p class="event-note" id="eventNote"></p>
       <div class="event-grid" id="eventGrid"></div>
+      <h2 class="sub">Босове</h2>
+      <p class="lede small">С име, лента с живота и три фази. Който нанесе последния удар — награда и слава.</p>
+      <div class="build-row boss-row">
+        <label for="bossPlayer">При кого</label>
+        <select id="bossPlayer"></select>
+      </div>
+      <div class="event-grid" id="bossGrid"></div>
       <h2 class="sub">Състезания</h2>
       <p class="lede small">С класация отстрани на екрана и награда за победителя.</p>
       <div class="event-grid" id="contestGrid"></div>
@@ -324,41 +362,97 @@
     <section class="view" id="view-ai">
       <header class="view-head">
         <h1>Изкуствен разум</h1>
-        <p class="lede">Gemini е безплатен и не иска карта. Ключ се взема от aistudio.google.com/apikey.</p>
+        <p class="lede">Сложи ключове от няколко безплатни услуги. Програмата ги ползва заедно: когато лимитът на една свърши, минава на следващата — така режисьорът, духовете и селяните мислят постоянно. Препоръка: <b>Gemini + Groq</b>, по желание и Mistral.</p>
       </header>
       <div class="ai-status" id="aiStatus"></div>
       <form class="form" id="aiForm" autocomplete="off">
+        <div class="provs">
+          <article class="prov" data-p="gemini">
+            <div class="prov-head"><b>Google Gemini</b><span class="tag free">безплатно</span><span class="pstate" data-s="gemini"></span></div>
+            <p class="pnote">Най-добрият на български. Умен, безплатен, без карта.</p>
+            <div class="prow">
+              <input type="password" name="gemini_key" aria-label="Ключ за Google Gemini" placeholder="Постави ключа тук">
+              <button class="btn btn-sm" type="button" data-url="gemini">Вземи ключ</button>
+              <button class="link-danger" type="button" data-clear="gemini" hidden>Махни</button>
+            </div>
+            <small class="pinfo" data-i="gemini"></small>
+          </article>
+          <article class="prov" data-p="groq">
+            <div class="prov-head"><b>Groq</b><span class="tag free">безплатно</span><span class="pstate" data-s="groq"></span></div>
+            <p class="pnote">Най-бързият. 1000 заявки на ден за всеки модел, без карта.</p>
+            <div class="prow">
+              <input type="password" name="groq_key" aria-label="Ключ за Groq" placeholder="Постави ключа тук">
+              <button class="btn btn-sm" type="button" data-url="groq">Вземи ключ</button>
+              <button class="link-danger" type="button" data-clear="groq" hidden>Махни</button>
+            </div>
+            <small class="pinfo" data-i="groq"></small>
+          </article>
+          <article class="prov" data-p="mistral">
+            <div class="prov-head"><b>Mistral</b><span class="tag free">безплатно</span><span class="pstate" data-s="mistral"></span></div>
+            <p class="pnote">Европейски. Безплатни заявки всеки месец, без карта.</p>
+            <div class="prow">
+              <input type="password" name="mistral_key" aria-label="Ключ за Mistral" placeholder="Постави ключа тук">
+              <button class="btn btn-sm" type="button" data-url="mistral">Вземи ключ</button>
+              <button class="link-danger" type="button" data-clear="mistral" hidden>Махни</button>
+            </div>
+            <small class="pinfo" data-i="mistral"></small>
+          </article>
+          <article class="prov" data-p="openrouter">
+            <div class="prov-head"><b>OpenRouter</b><span class="tag free">безплатно</span><span class="pstate" data-s="openrouter"></span></div>
+            <p class="pnote">Резерва: безплатни модели, 50 заявки на ден.</p>
+            <div class="prow">
+              <input type="password" name="openrouter_key" aria-label="Ключ за OpenRouter" placeholder="Постави ключа тук">
+              <button class="btn btn-sm" type="button" data-url="openrouter">Вземи ключ</button>
+              <button class="link-danger" type="button" data-clear="openrouter" hidden>Махни</button>
+            </div>
+            <small class="pinfo" data-i="openrouter"></small>
+          </article>
+          <article class="prov" data-p="cerebras">
+            <div class="prov-head"><b>Cerebras</b><span class="tag">иска карта</span><span class="pstate" data-s="cerebras"></span></div>
+            <p class="pnote">Много бърз. Иска карта за пробния кредит.</p>
+            <div class="prow">
+              <input type="password" name="cerebras_key" aria-label="Ключ за Cerebras" placeholder="Постави ключа тук">
+              <button class="btn btn-sm" type="button" data-url="cerebras">Вземи ключ</button>
+              <button class="link-danger" type="button" data-clear="cerebras" hidden>Махни</button>
+            </div>
+            <small class="pinfo" data-i="cerebras"></small>
+          </article>
+          <article class="prov" data-p="openai">
+            <div class="prov-head"><b>OpenAI</b><span class="tag">иска карта</span><span class="pstate" data-s="openai"></span></div>
+            <p class="pnote">Платено. Само ако вече имаш ключ.</p>
+            <div class="prow">
+              <input type="password" name="openai_key" aria-label="Ключ за OpenAI" placeholder="Постави ключа тук">
+              <button class="btn btn-sm" type="button" data-url="openai">Вземи ключ</button>
+              <button class="link-danger" type="button" data-clear="openai" hidden>Махни</button>
+            </div>
+            <small class="pinfo" data-i="openai"></small>
+          </article>
+        </div>
         <div class="field">
-          <label for="ai_provider">Услуга</label>
+          <label for="ai_provider">Ред</label>
           <select id="ai_provider" name="ai_provider">
-            <option value="gemini">Gemini — безплатно</option>
-            <option value="openai">OpenAI — платено</option>
+            <option value="auto">Автоматично — най-добрата за всяка задача</option>
+            <option value="gemini">Първо Google Gemini</option><option value="groq">Първо Groq</option><option value="mistral">Първо Mistral</option><option value="openrouter">Първо OpenRouter</option><option value="cerebras">Първо Cerebras</option><option value="openai">Първо OpenAI</option>
           </select>
+          <small>Автоматично: режисьорът пита първо Gemini, а репликите — първо Groq (по-бърз).</small>
         </div>
         <div class="field">
-          <label for="gemini_key">Ключ за Gemini</label>
-          <input id="gemini_key" name="gemini_key" type="password" placeholder="Постави ключа тук">
-        </div>
-        <div class="field">
-          <label for="gemini_model">Модел</label>
+          <label for="gemini_model">Модел на Gemini</label>
           <select id="gemini_model" name="gemini_model"><option value="auto">Автоматично — препоръчително</option></select>
           <small id="modelHint">Програмата сама избира работещ модел и сменя, ако някой спре.</small>
         </div>
-        <div class="field">
-          <label for="openai_key">Ключ за OpenAI</label>
-          <input id="openai_key" name="openai_key" type="password" placeholder="По желание">
-        </div>
         <div class="toggles">
-          <label class="toggle"><input type="checkbox" name="ai_enabled"><span></span>Духовете говорят</label>
+          <label class="toggle"><input type="checkbox" name="ai_enabled"><span></span>Духовете и селяните говорят</label>
           <label class="toggle"><input type="checkbox" name="roast_deaths"><span></span>Коментират смъртите</label>
           <label class="toggle"><input type="checkbox" name="greet_joins"><span></span>Посрещат влезлите</label>
         </div>
         <div class="actions">
           <button class="btn btn-primary" type="submit">Запази</button>
-          <button class="btn" type="button" id="testAi">Провери ключа</button>
+          <button class="btn" type="button" id="testAi">Провери всички ключове</button>
           <button class="btn btn-ghost" type="button" id="refreshModels">Обнови моделите</button>
           <span class="hint" id="aiResult"></span>
         </div>
+        <ul class="diag-list ai-tests" id="aiTests"></ul>
       </form>
     </section>
 

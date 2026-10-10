@@ -26,20 +26,25 @@ const EVENT_TEXT = {
   giant: "Гигант три пъти по-голям. Който го повали, печели.",
   riddle: "Гатанка в чата. Първият верен отговор печели.",
   race: "Координати и старт. Първият стигнал печели.",
+  bloodmoon: "Червена нощ, вълни чудовища. Оцелелите получават слава.",
+  goldrain: "От небето валят злато, изумруди и диаманти.",
+  invasion: "Разбойници нападат най-близкото село. Защитниците — слава.",
+  boss: "Бос с име и три фази.",
 };
 
 const EVENT_NAMES = {
   meteors: "Метеоритен дъжд", bounty: "Лов на глави", treasure: "Съкровище",
   undead: "Нощ на мъртвите", gravity: "Гравитацията се счупи",
   chickens: "Вали пилета", giant: "Гигантът", riddle: "Гатанка",
-  race: "Състезание",
+  race: "Състезание", bloodmoon: "Кървава луна", goldrain: "Златен дъжд",
+  invasion: "Нашествие", boss: "Бос",
 };
 
 const CHAOS_TEXT = [
-  "Духовете само отговарят. Без изненади.",
-  "Рядко събитие. Шегаджията мирува.",
-  "Събития и номера от Шегаджията. Препоръчително.",
-  "Чести събития, тежки изпитания, много номера.",
+  "Духовете само отговарят. Без история, гости и изненади.",
+  "Спокойно: режисьорът мисли по-рядко, духовете идват на ~4 минути.",
+  "Живо: история, босове, задачи, гости на ~2 минути. Препоръчително.",
+  "Хаос: режисьорът е навсякъде, гости всяка минута, много номера.",
 ];
 
 /* ---------- помощни ---------- */
@@ -141,13 +146,14 @@ function renderHome() {
     : S.running ? "Генерира се светът. Първия път отнема минута-две."
     : "Пусни сървъра, за да оживеят духовете.";
 
+  const roam = S.config.spirits_roam !== false && S.config.chaos > 0;
   $("#banners").innerHTML = Object.entries(S.characters).map(([k, c]) => `
-    <article class="banner c-${k} ${c.enabled ? "" : "dim"}">
+    <article class="banner c-${k} ${c.enabled || roam ? "" : "dim"}">
       <div class="glyph" aria-hidden="true"></div>
       <h3>${esc(c.name)}</h3>
       <p>${esc(SPIRIT_TEXT[k] || "")}</p>
-      <p class="where ${c.enabled ? "placed" : ""}">
-        ${c.enabled ? "В света" : "Още не е призован"}</p>
+      <p class="where ${c.enabled || roam ? "placed" : ""}">
+        ${visiting(k) ? `Сега е при ${esc(visiting(k))}` : c.enabled ? "На постоянно място" : roam ? "Обикаля света" : "Още не е призован"}</p>
     </article>`).join("");
 
   const R = rosterMap();
@@ -166,6 +172,42 @@ function renderHome() {
   $("#randomEvent").disabled = !S.ready || (!ev && !S.online.length);
 }
 
+function visiting(key) {
+  const a = S.visits && S.visits.active;
+  return a && S.characters[key] && a.spirit === S.characters[key].name ? a.player : null;
+}
+
+function renderStory() {
+  const st = S.story || {};
+  $("#sagaTitle").textContent = st.title ? `„${st.title}“${st.chapter ? ` — глава ${st.chapter}` : ""}` : "Още не е започнала";
+  $("#sagaGoal").textContent = st.title ? (st.goal ? `Цел: ${st.goal}` : "")
+    : "Режисьорът ще я измисли, щом някой влезе.";
+  $("#chronList").innerHTML = (st.chronicle || []).map(c =>
+    `<li><span class="when">преди ${ago(c.ago)}</span><span>${esc(c.text)}</span></li>`).join("");
+
+  const v = S.visits || {};
+  const rows = [];
+  if (v.active) rows.push(`<li class="live"><b>${esc(v.active.spirit)}</b> е при ${esc(v.active.player)} <small>още ${v.active.left} сек</small></li>`);
+  for (const r of (v.recent || []).slice(v.active ? 1 : 0, 5))
+    rows.push(`<li><b>${esc(r.spirit)}</b> → ${esc(r.player)} <small>преди ${ago(r.ago)}</small><span class="say">${esc(r.say)}</span></li>`);
+  $("#visitFeed").innerHTML = rows.join("") || `<li class="empty">${S.config.spirits_roam === false ? "Изключено в Събития." : "Още никой не е идвал."}</li>`;
+
+  const q = S.quests || { active: [], done: [] };
+  const qs = q.active.map(x => `<li data-q="${x.id}"><b>${esc(x.player)}</b>: ${esc(x.kind.toLowerCase())} ${esc(x.label)}
+      <small>${x.progress}/${x.amount} · за ${esc(x.giver)} · ${ago(Math.max(0, x.left))}</small>
+      <button class="link-danger" data-qc="${x.id}" type="button">махни</button></li>`)
+    .concat(q.done.slice(0, 3).map(x => `<li class="done"><b>${esc(x.player)}</b> ✓ ${esc(x.label)} <small>за ${esc(x.giver)}, преди ${ago(x.ago)}</small></li>`));
+  const qf = $("#questFeed");
+  if (!qf.contains(document.activeElement)) {
+    qf.innerHTML = qs.join("") || `<li class="empty">Няма задачи.</li>`;
+    $$("#questFeed [data-qc]").forEach(b => b.addEventListener("click",
+      () => call("quest_cancel", parseInt(b.dataset.qc, 10)).then(refresh)));
+  }
+  $("#fameList").innerHTML = (S.fame || []).map(f =>
+    `<li><span class="name">${esc(f.name)}</span><span class="rank r-${esc(f.color)}">${esc(f.rank)}</span><b>${f.fame}</b></li>`).join("")
+    || `<li class="empty">Още никой няма слава.</li>`;
+}
+
 function renderHealth() {
   $("#health").innerHTML = (S.health || []).map(h => `
     <div class="h-item ${cls(h.ok)}" title="${esc(h.detail)}">
@@ -181,33 +223,54 @@ function renderAi() {
   const a = S.ai || {};
   const title = h.ok === true ? "Работи" : h.ok === false ? "Не работи" : "Още не е питан";
   const stats = a.ok || a.err
-    ? `${plural(a.ok, "отговор", "отговора")}, ${plural(a.err, "грешка", "грешки")}${a.last_ok_ago != null ? `, последен преди ${ago(a.last_ok_ago)}` : ""}`
+    ? `${plural(a.ok, "отговор", "отговора")}, ${plural(a.err, "грешка", "грешки")}${a.today ? `, днес ${a.today}` : ""}${a.last_ok_ago != null ? `, последен преди ${ago(a.last_ok_ago)}` : ""}`
     : "";
   let tip = "";
   const d = String(h.detail || "");
-  // При „работи" подробността е само броят — показваме статистиката вместо нея
-  const line = h.ok === true ? stats : [d, stats].filter(Boolean).join(" · ");
-  if (/key not valid|API_KEY_INVALID|401|403|Грешка 400/i.test(d))
-    tip = "Ключът не е приет. Копирай го наново от aistudio.google.com/apikey и го постави долу.";
-  else if (/Няма ключ/.test(d))
-    tip = "Без ключ духовете посрещат и коментират с готови реплики, а събитията вървят нормално. За разговори сложи безплатен ключ.";
+  const now = a.provider && a.model ? `Сега отговаря ${a.provider} / ${a.model}.` : "";
+  const line = h.ok === true ? [now, stats].filter(Boolean).join(" · ") : [d, stats].filter(Boolean).join(" · ");
+  if (/Няма ключ/.test(d))
+    tip = "Без ключ режисьорът разказва готови саги, а духовете ползват готови реплики. За истински разум сложи безплатен ключ — Gemini или Groq.";
   else if (/лимит/i.test(d))
-    tip = "Безплатният лимит се нулира всеки ден. Дотогава духовете ползват готови реплики.";
+    tip = "Безплатният лимит на една услуга свърши. Добави още една (Groq, Mistral) — програмата сама ще мине на нея.";
+  else if (h.ok === false)
+    tip = "Натисни „Провери всички ключове“, за да видиш коя услуга не отговаря.";
+  else if ((a.configured || 0) === 1)
+    tip = "Работи с една услуга. Добави и втора безплатна, за да не спира, когато лимитът свърши.";
+  const box = $("#aiStatus");
+  box.className = "ai-status " + cls(h.ok);
+  box.innerHTML = `<span class="dot"></span><div><b>${title}</b>
+    <small>${esc(line)}</small>${tip ? `<small class="tip">${esc(tip)}</small>` : ""}</div>`;
+
+  for (const p of a.providers || []) {
+    const st = $(`[data-s="${p.key}"]`), info = $(`[data-i="${p.key}"]`), clr = $(`[data-clear="${p.key}"]`);
+    if (!st) continue;
+    const state = !p.set ? ["", "няма ключ"]
+      : p.bad_key ? ["bad", "ключът не е приет"]
+      : p.ok && (!p.err || p.ok >= p.err) ? ["ok", "работи"]
+      : p.err && !p.ok ? ["bad", "грешка"]
+      : p.models ? ["ok", "готов"] : ["", "сложен"];
+    st.className = "pstate " + state[0];
+    st.textContent = state[1];
+    clr.hidden = !p.set;
+    const bits = [];
+    if (p.set && p.model) bits.push(`отговаря ${p.model} (${p.ok})`);
+    else if (p.set && p.top && p.top.length) bits.push(`ще ползва ${p.top.slice(0, 2).join(", ")}`);
+    if (p.set && p.models) bits.push(`${p.models} модела`);
+    if (p.set && p.last_error) bits.push(p.last_error);
+    info.textContent = bits.join(" · ");
+    info.classList.toggle("bad-text", !!(p.set && (p.bad_key || (p.err && !p.ok))));
+  }
+
   const models = (a.models || []);
   const items = [["auto", "Автоматично — препоръчително"], ...models.map(m => [m, m])];
   const chosen = a.chosen || S.config.gemini_model || "auto";
   if (chosen !== "auto" && !models.includes(chosen)) items.push([chosen, chosen + " (ръчно)"]);
   const sel = $("#gemini_model");
-  const focused = document.activeElement === sel;
-  if (!focused) { fillSelect(sel, items); if (!sel.dataset.touched) sel.value = chosen; }
-  $("#modelHint").textContent = a.model
-    ? `Сега отговаря ${a.model}.` + (a.unavailable && a.unavailable.length ? ` Недостъпни: ${a.unavailable.slice(0, 4).join(", ")}.` : "")
-    : models.length ? `Налични ${models.length} модела. Ще избере сам.`
-    : a.list_error ? `Списъкът с модели не се взе: ${a.list_error}` : "Програмата сама избира работещ модел и сменя, ако някой спре.";
-  const box = $("#aiStatus");
-  box.className = "ai-status " + cls(h.ok);
-  box.innerHTML = `<span class="dot"></span><div><b>${title}</b>
-    <small>${esc(line)}</small>${tip ? `<small class="tip">${esc(tip)}</small>` : ""}</div>`;
+  if (document.activeElement !== sel) { fillSelect(sel, items); if (!sel.dataset.touched) sel.value = chosen; }
+  $("#modelHint").textContent = models.length ? `Налични ${models.length} модела на Gemini. Ще избере сам.`
+    : a.list_error && S.config.gemini_key_set ? `Списъкът с модели не се взе: ${a.list_error}`
+    : "Програмата сама избира работещ модел и сменя, ако някой спре.";
 }
 
 function renderServer() {
@@ -260,6 +323,7 @@ function renderPlayers() {
            : "IP — още не е влизал",
       r.visits ? plural(r.visits, "влизане", "влизания") : "",
       r.deaths ? plural(r.deaths, "смърт", "смърти") : "",
+      r.fame ? `${r.fame} слава` : "",
     ].filter(Boolean).join(" · ");
     return `
     <li class="${r.online ? "is-live" : ""}">
@@ -267,10 +331,12 @@ function renderPlayers() {
       <span><span class="name">${esc(n)}</span><span class="tags">
         ${r.online ? '<span class="tag live">в света</span>' : ""}
         ${r.admin ? '<span class="tag admin">OP</span>' : ""}
+        ${r.rank ? `<span class="tag rank">${esc(r.rank)}</span>` : ""}
         ${!r.whitelisted ? '<span class="tag">не е в списъка</span>' : ""}
       </span><span class="meta">${meta}</span></span>
       <span class="row-actions">
         ${r.online ? `<button class="btn btn-sm" data-a="prank" data-n="${esc(n)}">Пусни номер</button>` : ""}
+        <button class="btn btn-sm" data-a="fame" data-n="${esc(n)}">+50 слава</button>
         <button class="btn btn-sm" data-a="admin" data-n="${esc(n)}">
           ${r.admin ? "Махни OP" : "Дай OP"}</button>
         ${r.whitelisted ? `<button class="btn btn-sm btn-danger" data-a="remove" data-n="${esc(n)}">Махни</button>`
@@ -286,6 +352,7 @@ function renderPlayers() {
     if (b.dataset.a === "add") call("whitelist_add", n).then(refresh);
     if (b.dataset.a === "admin") call("toggle_admin", n).then(refresh);
     if (b.dataset.a === "prank") call("prank", n);
+    if (b.dataset.a === "fame") call("fame_add", n, 50).then(refresh);
   }));
 
   const net = S.config.open_to_network;
@@ -310,9 +377,11 @@ function renderSpirits() {
         <select data-k="${k}" class="who" ${S.ready ? "" : "disabled"}>
           ${opts || "<option value=''>Никой не е в света</option>"}
         </select>
+        <button class="btn btn-primary" data-a="visit" data-k="${k}" ${S.ready && S.online.length ? "" : "disabled"}>Прати при него</button>
         <button class="btn" data-a="place" data-k="${k}" ${S.ready && S.online.length ? "" : "disabled"}>
-          ${c.enabled ? "Премести до него" : "Призови до него"}</button>
+          ${c.enabled ? "Премести тук завинаги" : "Постави тук завинаги"}</button>
       </div>
+      ${visiting(k) ? `<p class="hint">Сега е при ${esc(visiting(k))}.</p>` : ""}
       <form class="inline talk" data-k="${k}">
         <input placeholder="Кажи му нещо като собственик" ${S.ready ? "" : "disabled"}>
         <button class="btn" ${S.ready ? "" : "disabled"}>Кажи</button>
@@ -322,6 +391,10 @@ function renderSpirits() {
   $$("#spirits [data-a=place]").forEach(b => b.addEventListener("click", () => {
     const who = $(`#spirits select[data-k="${b.dataset.k}"]`).value;
     call("place", b.dataset.k, who).then(refresh);
+  }));
+  $$("#spirits [data-a=visit]").forEach(b => b.addEventListener("click", () => {
+    const who = $(`#spirits select[data-k="${b.dataset.k}"]`).value;
+    call("spirit_visit", b.dataset.k, who).then(refresh);
   }));
   $$("#spirits [data-a=unplace]").forEach(b => b.addEventListener("click",
     () => call("remove", b.dataset.k).then(refresh)));
@@ -337,7 +410,7 @@ function renderSpirits() {
 
 function renderEvents() {
   const n = S.online.length;
-  $("#eventGrid").innerHTML = S.events.map(ev => {
+  $("#eventGrid").innerHTML = S.events.filter(ev => ev.key !== "boss").map(ev => {
     const blocked = !S.ready || n < ev.min_players || !!S.event;
     const why = !S.ready ? "" : n < ev.min_players
       ? ` Иска поне ${ev.min_players} играчи.` : "";
@@ -348,7 +421,7 @@ function renderEvents() {
   $("#eventNote").textContent = !S.ready ? "Пусни сървъра, за да пускаш събития."
     : S.event ? `Сега върви „${EVENT_NAMES[S.event.key] || S.event.title}“. Изчакай да свърши.`
     : !n ? "Няма никой в света — събитията чакат поне един играч."
-    : S.config.chaos ? `Пазителят пуска изненада на около ${S.config.director_minutes} минути. В света: ${n}.`
+    : S.config.chaos ? `Режисьорът води историята и решава на около ${ago(S.config.gm_period || 120)}. В света: ${n}.`
     : "Изненадите са спрени (Тихо). Можеш да пускаш събития ръчно.";
   $$("#eventGrid .ev").forEach(b => b.addEventListener("click",
     () => call("event", b.dataset.k).then(refresh)));
@@ -366,7 +439,20 @@ function renderEvents() {
       () => call("contest", b.dataset.c).then(refresh)));
   }
   if (document.activeElement !== $("#gm_power")) $("#gm_power").value = S.config.gm_power || "full";
+  if (document.activeElement !== $("#gm_period")) $("#gm_period").value = String(S.config.gm_period || 120);
   $("#gm_enabled").checked = S.config.gm_enabled !== false;
+  $("#spirits_roam").checked = S.config.spirits_roam !== false;
+  $("#villager_quests").checked = S.config.villager_quests !== false;
+  fillSelect($("#bossPlayer"), [["", "случаен играч"], ...playerItems(true)]);
+  const bg = $("#bossGrid");
+  const bsig = JSON.stringify([blocked, S.bosses || []]);
+  if (bg.dataset.sig !== bsig) {
+    bg.dataset.sig = bsig;
+    bg.innerHTML = (S.bosses || []).map(b => `
+      <button class="ev boss" data-b="${esc(b)}" ${blocked ? "disabled" : ""}><b>${esc(b)}</b><span>Бос</span></button>`).join("");
+    $$("#bossGrid .ev").forEach(b => b.addEventListener("click",
+      () => call("boss", $("#bossPlayer").value || "", b.dataset.b).then(refresh)));
+  }
 }
 
 function renderGm() {
@@ -439,12 +525,12 @@ function fillForms() {
     $$(`${f} [name]`).forEach(el => {
       if (el.type === "checkbox") el.checked = !!c[el.name];
       else if (el.type === "password") el.placeholder = c[el.name + "_set"]
-        ? "Запазен — остави празно, за да не го сменяш" : el.placeholder;
+        ? "Запазен ✓ (празно = без промяна)" : "Постави ключа тук";
       else el.value = c[el.name] ?? "";
     });
   }
   $("#chaos").value = c.chaos;
-  $("#director_minutes").value = c.director_minutes;
+  $("#gm_period").value = String(c.gm_period || 120);
   $("#ownerName").value = c.owner_name || "";
   $("#version").textContent = S.version && S.version !== "dev" ? `версия ${S.version}` : "";
 }
@@ -543,9 +629,18 @@ $("#aiForm").addEventListener("submit", async e => {
 });
 
 $("#testAi").addEventListener("click", async () => {
-  $("#aiResult").textContent = "Питам...";
-  const r = await api.test_ai();
-  $("#aiResult").textContent = r && r.ok ? `Работи (${r.model || "?"}): „${r.say}“` : `Не работи: ${r ? r.error : ""}`;
+  const b = $("#testAi");
+  b.disabled = true;
+  $("#aiResult").textContent = "Питам всяка услуга поотделно...";
+  $("#aiTests").innerHTML = "";
+  let r = null;
+  try { r = await api.test_ai(); } catch (e) { r = { ok: false, error: String(e), results: [] }; }
+  b.disabled = false;
+  $("#aiResult").textContent = !r ? "" : r.ok ? `Работи: ${r.model}` : `Не работи: ${r.error || ""}`;
+  $("#aiTests").innerHTML = ((r && r.results) || []).map(x => `
+    <li class="${cls(x.ok)}"><span class="mark">${mark(x.ok)}</span><span>${esc(x.name)}${x.ok ? ` — ${esc(x.model)}, ${x.seconds} сек` : ""}</span>
+    <small>${esc(x.ok ? `„${x.say}“` : x.error)}</small></li>`).join("");
+  refresh();
 });
 
 $("#chaos").addEventListener("input", e => {
@@ -553,8 +648,20 @@ $("#chaos").addEventListener("input", e => {
 });
 $("#chaos").addEventListener("change", e =>
   call("save", { chaos: parseInt(e.target.value, 10) }).then(refresh));
-$("#director_minutes").addEventListener("change", e =>
-  call("save", { director_minutes: parseInt(e.target.value, 10) }));
+$("#gm_period").addEventListener("change", e =>
+  call("save", { gm_period: parseInt(e.target.value, 10) }).then(refresh));
+$("#spirits_roam").addEventListener("change", e => call("save", { spirits_roam: e.target.checked }).then(refresh));
+$("#villager_quests").addEventListener("change", e => call("save", { villager_quests: e.target.checked }).then(refresh));
+$("#sagaReset").addEventListener("click", () => {
+  if (window.confirm("Да започне ли нова история? Летописът и задачите се забравят."))
+    call("story_reset").then(refresh);
+});
+$$("[data-url]").forEach(b => b.addEventListener("click", () => call("open_url", b.dataset.url)));
+$$("[data-clear]").forEach(b => b.addEventListener("click", async () => {
+  await call("clear_key", b.dataset.clear);
+  formsFilled = false;
+  refresh();
+}));
 
 $("#addPlayer").addEventListener("submit", async e => {
   e.preventDefault();
@@ -624,7 +731,7 @@ $("#gemini_model").addEventListener("change", e => { e.target.dataset.touched = 
 $("#refreshModels").addEventListener("click", async () => {
   $("#modelHint").textContent = "Питам кои модели са налични...";
   const r = await call("ai_models", true);
-  if (r && r.ok) toast(`Налични ${r.models.length} модела.`);
+  if (r && r.ok) toast("Моделите са обновени: " + (r.by || []).map(x => `${x.provider} ${x.models.length}`).join(", "));
   refresh();
 });
 $("#report").addEventListener("click", () => call("export_report"));
@@ -776,8 +883,9 @@ async function refresh() {
     S = await api.state();
   } catch (e) { return; }
   if (!S) return;
-  const steps = [fillForms, renderPower, renderHealth, renderHome, renderServer,
-    renderPlayers, renderEvents, renderAi, renderGm, renderConsole, renderVillages];
+  const steps = [fillForms, renderPower, renderHealth, renderHome, renderStory,
+    renderServer, renderPlayers, renderEvents, renderAi, renderGm, renderConsole,
+    renderVillages];
   // Една счупена част не бива да спира останалите
   for (const f of steps) {
     try { f(); } catch (e) { console.error(f.name, e); }

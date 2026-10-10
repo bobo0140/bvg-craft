@@ -17,6 +17,9 @@ import time
 from .. import paths
 from ..logbus import log
 from ..game import blueprints, events_lib, guide, world
+from ..game.fame import RANKS, Fame, rank_of
+from ..game.quests import Quests
+from ..game.spirits import Visits
 from ..game.villages import Villages
 from . import characters, providers, safety
 from .director import Director
@@ -25,6 +28,7 @@ PLAYERS_FILE = None          # тестовете могат да го смен�
 NEAR_RADIUS = 7
 PLAYER_COOLDOWN = 7
 POS_EVERY = 5                # на колко секунди обновяваме позициите
+SLOW_EVERY = 12              # селяните: къде са, нови села, задачи
 
 ROASTS = [
     "{p} {cause}. Аплодисменти, моля.",
@@ -90,7 +94,10 @@ class Brain:
         self.server = server
         self.engine = events_lib.Engine(sender, cfg,
                                         lambda: set(server.online),
-                                        on_win=self._on_win)
+                                        on_win=self._on_win,
+                                        on_fame=self._on_fame,
+                                        positions=self.positions,
+                                        village_near=self.village_near)
         self.history = {k: [] for k in characters.CHARACTERS}
         self.worker_history = {}
         self.last_talk = {}
@@ -100,9 +107,14 @@ class Brain:
         self.next_prank = time.time() + 300
         self.busy_count = 0
         self.pos = {}                  # име -> (x, y, z), обновява се често
+        self.dims = {}                 # име -> overworld / the_nether / ...
         self.pos_at = 0.0
+        self.slow_at = 0.0
         self.villages = Villages(sender, cfg, self.positions,
                                  lambda: set(server.online))
+        self.fame = Fame(sender, self)
+        self.quests = Quests(sender, self)
+        self.visits = Visits(self)
         self.director = Director(self)
         self.recent_deaths = {}        # име -> [времена]
 
@@ -150,7 +162,22 @@ class Brain:
         info = self.player(player)
         info["wins"] = info.get("wins", 0) + 1
         self._save_players()
-        self.director.note(f"{player} спечели „{title}“")
+        self.fame.add(player, 30, f"победа: {title}")
+        self.director.note(f"{player} спечели „{title}“", important=True)
+
+    def _on_fame(self, player, pts, reason=""):
+        self.fame.add(player, pts, reason)
+
+    def village_near(self, player, radius=220):
+        """Центърът на най-близкото село до играча (за нашествията)."""
+        p = self.pos.get(player)
+        best, bd = None, radius
+        for v in self.villages.villages:
+            c = v["center"]
+            d = world.distance(p, c) if p else 1e9
+            if d < bd:
+                best, bd = tuple(c), d
+        return best
 
     # ---------- позиции ----------
 
@@ -167,15 +194,25 @@ class Brain:
         if not online:
             self.pos = {}
             return
-        cmds = [f"data get entity {n} Pos" for n in online
-                if world.name_ok(n)]
+        names = [n for n in online if world.name_ok(n)]
+        cmds = []
+        for n in names:
+            cmds += [f"data get entity {n} Pos", f"data get entity {n} Dimension"]
         res = self.s.query_many(cmds)
-        out = {}
-        for n, (ok, r) in zip([n for n in online if world.name_ok(n)], res):
+        out, dims = {}, {}
+        for i, n in enumerate(names):
+            pair = res[2 * i:2 * i + 2]
+            if len(pair) < 2:
+                break
+            (ok, r), (ok2, r2) = pair
             m = world.POS_RE.search(r or "") if ok else None
             if m:
                 out[n] = tuple(float(v) for v in m.groups())
+            m = world.STR_RE.search(r2 or "") if ok2 else None
+            if m:
+                dims[n] = m.group(1).replace("minecraft:", "")
         self.pos = out
+        self.dims = dims
         self.pos_at = time.time()
 
     # ---------- цикъл ----------
@@ -185,7 +222,8 @@ class Brain:
         # че вече не е текущият, и спира — иначе събитията вървят двойно.
         self._gen += 1
         self._stop.clear()
-        self.director.next_at = time.time() + 120
+        self.director.next_at = time.time() + 50
+        self.visits.next_at = time.time() + 70
         self.next_prank = time.time() + 240
         threading.Thread(target=self._loop, args=(self._gen,),
                          daemon=True).start()
@@ -193,7 +231,9 @@ class Brain:
     def stop(self):
         self._stop.set()
         self.engine.stop()
+        self.visits.active = None
         self.villages.save(force=True)
+        self.quests.save()
 
     def _loop(self, gen):
         while not self._stop.is_set() and gen == self._gen:
@@ -201,7 +241,8 @@ class Brain:
             if not self.server.ready or gen != self._gen:
                 continue
             for step in (self._tick_positions, self.engine.tick,
-                         self.villages.tick, self.director.tick,
+                         self._tick_villages, self._tick_quests,
+                         self.visits.tick, self.director.tick,
                          self._trickster):
                 try:
                     step()
@@ -211,6 +252,24 @@ class Brain:
     def _tick_positions(self):
         if time.time() - self.pos_at > POS_EVERY:
             self._refresh_positions()
+
+    def _tick_villages(self):
+        self.villages.tick()
+        if time.time() - self.slow_at < SLOW_EVERY or not self.server.online:
+            return
+        self.slow_at = time.time()
+        self.villages.refresh_positions()
+        self.villages.auto_found(self.dims)
+        self.villages.offer_quests(self.quests)
+
+    def givers(self):
+        out = self.villages.giver_positions()
+        out.update(self.visits.giver_positions())
+        return out
+
+    def _tick_quests(self):
+        if self.quests.items:
+            self.quests.tick(self.positions(), self.givers())
 
     def _trickster(self):
         chaos = int(self.cfg.get("chaos") or 0)
@@ -227,6 +286,13 @@ class Brain:
     def on_event(self, ev):
         t = ev["type"]
         if t == "ready":
+            # остатъци от миналия път: гости, босове, ленти
+            self.s.send_many(["kill @e[tag=bvg_visit]",
+                              "kill @e[tag=bvg_boss]",
+                              "kill @e[tag=bvg_minion]",
+                              "bossbar remove bvg:boss",
+                              "bossbar remove bvg:event"])
+            self.fame.setup()
             self.respawn_npcs()
             self.villages.resume()
             log.ok("Мозък", "Светът е готов. Героите са на местата си.")
@@ -245,9 +311,12 @@ class Brain:
             big = any(w in name.lower() for w in IMPORTANT_ADV)
             self.director.note(f"{ev['player']} постигна „{name}“",
                                important=big)
-            if random.random() < 0.3:
+            self.fame.add(ev["player"], 15 if big else 4, name[:30])
+            if big or random.random() < 0.3:
                 world.say(self.s, "keeper",
                           f"{ev['player']} постигна „{name}“. Браво!")
+        elif t == "named_death":
+            self.director.note(ev.get("message", "")[:120])
         try:
             self.engine.feed(ev)
         except Exception:
@@ -260,11 +329,12 @@ class Brain:
         info["visits"] += 1
         info["last_seen"] = time.time()
         self._save_players()
+        self.fame.sync(name)
         self.director.note(
             f"{name} влезе" + (" за ПЪРВИ път" if first else
                                f" (не е идвал {int(away // 3600)} ч)"
                                if away > 6 * 3600 else ""),
-            important=first)
+            important=True)
         if not self.cfg.get("greet_joins"):
             return
 
@@ -309,7 +379,8 @@ class Brain:
                     [{"role": "user", "content":
                       f"{name} току-що умря: „{ev['message']}“. Това му е "
                       f"смърт номер {info['deaths']}. Кажи едно кратко "
-                      f"смешно подигравателно изречение. Без команди."}])
+                      f"смешно подигравателно изречение. Без команди."}],
+                    role="fast", max_tokens=400, timeout=25)
             line = (reply or {}).get("say") if reply else None
             if not line:
                 line = random.choice(ROASTS).format(p=name, cause=cause,
@@ -333,11 +404,13 @@ class Brain:
         worker = None if key else self.villages.find_worker(msg)
         if not key and not worker:
             pos = self.pos.get(name) or world.player_pos(self.s, name)
-            key = self._near_npc(name, pos)
+            key = self.visits.near(pos) or self._near_npc(name, pos)
             if not key and pos:
                 worker = self.villages.worker_near(pos, 6)
         if not key and not worker:
             return
+        if key and self.visits.active and self.visits.active["key"] == key:
+            self.visits.stay(45)
 
         now = time.time()
         if now - self.last_talk.get(name, 0) < PLAYER_COOLDOWN \
@@ -367,12 +440,17 @@ class Brain:
 
     # ---------- команди от играта ----------
 
-    HELP = ("!режисьор — нека AI реши какво да стане сега · "
-            "!ai <задача> — свободна задача за AI режисьора · "
-            "!събитие [име] · !състезание [име] · !стоп · "
-            "!село — ново село до теб · !строй <къща|ферма|кула|кладенец|"
-            "градина|фенер|сергия> [стил] · !дух <име> — дух до теб · "
-            "!ден · !нощ · !ясно · !op <играч>")
+    HELP = ("!режисьор — AI решава какво да стане сега · "
+            "!ai <задача> — свободна задача за режисьора · "
+            "!събитие [име] · !състезание [име] · !бос [име] · !стоп · "
+            "!гост [дух] — дух идва при теб · !село · !строй <къща|ферма|"
+            "кула|кладенец|градина|фенер|сергия> [стил] · !дух <име> — "
+            "постоянен дух тук · !слава <играч> <точки> · !сага — нова "
+            "история · !ден · !нощ · !ясно · !op <играч>")
+    PLAYER_HELP = ("!задачи — твоите задачи · !слава — рангът ти и "
+                   "класацията · !история — какво става в света · "
+                   "!летопис — книга с всичко досега. Говори с духовете и "
+                   "селяните по име или застани до тях.")
 
     def tell_admin(self, name, text, col="gold"):
         if name:
@@ -385,18 +463,46 @@ class Brain:
         cmd = (parts[0] if parts else "").lower()
         arg = parts[1].strip() if len(parts) > 1 else ""
         if cmd in ("помощ", "help", "команди"):
+            world.tell(self.s, name, self.PLAYER_HELP, "gold")
             if self.is_admin(name):
-                self.tell_admin(name, self.HELP)
-            else:
-                world.tell(self.s, name, "Говори с духовете по име: "
-                                         "Пазителю, Майсторе, Шегаджийо, "
-                                         "Маро. Или застани до тях.", "gold")
+                self.tell_admin(name, "Админ: " + self.HELP)
             return
-        if cmd in ("състояние", "класация", "status"):
+        if cmd in ("състояние", "status"):
             st = self.engine.status()
             world.tell(self.s, name, (f"{st['title']}: остават {st['left']} "
                                       f"сек") if st else "Нищо не върви.",
                        "gold")
+            return
+        if cmd in ("задачи", "задача", "мисии", "quests") and \
+                not (arg and self.is_admin(name)):
+            world.tell(self.s, name, "📜 " + self.quests.describe(name),
+                       "gold")
+            return
+        if cmd in ("слава", "ранг", "класация", "fame") and \
+                not (arg and self.is_admin(name)):
+            pts = self.fame.points(name)
+            idx = rank_of(pts)
+            nxt = RANKS[idx + 1] if idx + 1 < len(RANKS) else None
+            top = " · ".join(f"{i + 1}. {r['name']} ({r['fame']})"
+                             for i, r in enumerate(self.fame.top(5)))
+            world.tell(self.s, name,
+                       f"Ти си {RANKS[idx][1]} — {pts} слава" +
+                       (f", до {nxt[1]} остават {nxt[0] - pts}" if nxt else
+                        "") + (f". Класация: {top}" if top else ""), "gold")
+            return
+        if cmd in ("история", "сага", "story") and \
+                not (cmd == "сага" and self.is_admin(name)):
+            st = self.director.story
+            last = [t for _, t in st.get("chronicle", [])[-2:]]
+            world.tell(self.s, name,
+                       (f"„{st['title']}“, глава {st.get('chapter') or 1}. "
+                        f"Цел: {st.get('goal') or '—'}. " if st.get("title")
+                        else "Историята тепърва започва. ") +
+                       " ".join(last), "gold")
+            return
+        if cmd in ("летопис", "книга", "chronicle"):
+            self.s.send(self.director.book_command(name))
+            world.tell(self.s, name, "Летописът е в инвентара ти.", "gold")
             return
         if not self.is_admin(name):
             world.tell(self.s, name, "Тази команда е само за админите.",
@@ -441,6 +547,37 @@ class Brain:
             ok, m = self.engine.start_contest(key)
             say(f"Пуснах: {m}" if ok else f"Не тръгна: {m}",
                 "gold" if ok else "red")
+        elif cmd in ("бос", "boss"):
+            spec = self._boss_preset(arg)
+            ok, m = self.engine.start_boss(spec, name)
+            say(f"Пуснах боса: {m}" if ok else f"Не тръгна: {m}",
+                "gold" if ok else "red")
+        elif cmd in ("гост", "visit"):
+            key = self._spirit_key(arg) if arg else None
+            ok, m = self.visits.start(key, name, reason="админът го повика")
+            say(m, "gold" if ok else "red")
+        elif cmd in ("слава", "fame"):
+            bits = arg.split()
+            try:
+                who, pts = bits[0], int(bits[1])
+            except (IndexError, ValueError):
+                return say("Напиши: !слава Ivan_99 50")
+            if not world.name_ok(who):
+                return say("Няма такъв играч.", "red")
+            self.fame.add(who, max(-500, min(pts, 1000)), "от собственика")
+            say(f"{who}: {self.fame.points(who)} слава.")
+        elif cmd in ("задачи", "задача", "мисии", "quests"):
+            from ..game.quests import VILLAGER_WANTS
+            who = arg.split()[0] if arg else name
+            k, t, n, r = random.choice(VILLAGER_WANTS["*"])
+            ok, m = self.quests.give(who, k, t, n, reward=r, fame=15,
+                                     text="Задача от собственика.")
+            say(f"Задача за {who}: {m}" if ok else f"Не стана: {m}",
+                "gold" if ok else "red")
+        elif cmd in ("сага", "saga"):
+            self.director.reset_story()
+            ok, m = self.director.think("собственикът поиска нова сага")
+            say("Започва нова история..." if ok else f"Не сега: {m}")
         elif cmd in ("стоп", "stop"):
             self.engine.stop()
             say("Спрях текущото събитие.")
@@ -456,10 +593,7 @@ class Brain:
                                                 owner=name)
             say(m, "gold" if ok else "red")
         elif cmd in ("дух", "spirit"):
-            key = characters.find_by_text(arg) or \
-                {"пазител": "keeper", "майстор": "builder",
-                 "шегаджия": "trickster", "мара": "trader"}.get(
-                    arg.lower().strip())
+            key = self._spirit_key(arg)
             if not key:
                 return say("Кой дух? Пазителя, Майстора, Шегаджията или Мара.")
             ok, m = self.place_npc(key, name)
@@ -484,6 +618,30 @@ class Brain:
             say("Не знам тази команда. Напиши !помощ")
 
     @staticmethod
+    def _spirit_key(arg):
+        low = (arg or "").lower().strip()
+        if low in characters.CHARACTERS:
+            return low
+        return characters.find_by_text(arg) or next(
+            (v for k, v in {"пазител": "keeper", "майстор": "builder",
+                            "шегаджи": "trickster", "мар": "trader",
+                            "търгов": "trader"}.items() if low.startswith(k)),
+            None)
+
+    @staticmethod
+    def _boss_preset(arg):
+        low = (arg or "").lower().strip()
+        if not low:
+            return None
+        for p in events_lib.BOSS_PRESETS:
+            if low[:4] in p["name"].lower():
+                return p
+        return {"name": arg.strip()[:28], "mob": "zombie", "scale": 2.4,
+                "hp": 260, "damage": 8, "armor": ["netherite_helmet"],
+                "weapon": "iron_sword", "minions": {"mob": "zombie",
+                                                    "count": 3}}
+
+    @staticmethod
     def _event_key(arg):
         low = arg.lower().strip()
         if low in events_lib.LIBRARY:
@@ -492,7 +650,9 @@ class Brain:
                  "мъртв": "undead", "зомби": "undead", "гравит": "gravity",
                  "пилет": "chickens", "кокош": "chickens", "гигант": "giant",
                  "гатанк": "riddle", "загадк": "riddle", "надбяг": "race",
-                 "състез": "race"}
+                 "състез": "race", "кърв": "bloodmoon", "луна": "bloodmoon",
+                 "злат": "goldrain", "дъжд": "goldrain", "нашеств": "invasion",
+                 "разбой": "invasion", "бос": "boss"}
         return next((v for k, v in names.items() if k in low), None)
 
     @staticmethod
@@ -512,9 +672,7 @@ class Brain:
     # ---------- разговор ----------
 
     def _ai_ready(self):
-        prov = self.cfg.get("ai_provider")
-        return bool(self.cfg.get("gemini_key" if prov == "gemini"
-                                 else "openai_key"))
+        return bool(providers.configured(self.cfg))
 
     def _context(self, name, key):
         pos = self.pos.get(name) or world.player_pos(self.s, name)
@@ -555,7 +713,8 @@ class Brain:
                         "content": f"{name}: {message or '(гласово)'}"}]
         system = characters.system_prompt(key, self._context(name, key))
         reply, err = providers.ask(self.cfg, system, msgs, audio=audio,
-                                   force=admin)
+                                   force=admin, role="fast", max_tokens=1500,
+                                   timeout=40)
         if err == "busy":
             self.busy_count += 1
             world.whisper(self.s, name, key, "Много хора ме питат наведнъж. "
@@ -575,7 +734,18 @@ class Brain:
 
         if text:
             world.say(self.s, key, text)
-            world.bubble(self.s, key, text)
+            va = self.visits.active
+            if va and va["key"] == key:
+                world.bubble_tag(self.s, va["tag"], text, 2.4)
+                self.visits.stay(45)
+            else:
+                world.bubble(self.s, key, text)
+                here = (self.cfg.get("characters") or {}).get(key) or {}
+                if not (here.get("enabled", True) and here.get("pos")) and \
+                        self.cfg.get("spirits_roam", True):
+                    # викнат по име, а го няма наоколо — идва при играча
+                    self.visits.start(key, name, line="", act=False,
+                                      reason="повикаха го")
 
         powers = list(ch["powers"])
         limit = 80 if admin else 30
@@ -604,7 +774,8 @@ class Brain:
             reply, err = providers.ask(
                 self.cfg, system,
                 hist + [{"role": "user", "content": f"{name}: {message}"}],
-                force=self.is_admin(name))
+                force=self.is_admin(name), role="fast", max_tokens=900,
+                timeout=35)
             if reply:
                 self.worker_history[w["id"]] = (hist + [
                     {"role": "user", "content": f"{name}: {message}"},

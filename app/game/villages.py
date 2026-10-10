@@ -767,7 +767,7 @@ class Villages:
         """Свободен селянин до играч — понякога иска нещо."""
         if not self.cfg.get("villager_quests", True):
             return
-        from .quests import VILLAGER_WANTS, ASK_LINES, KIND_TEXT
+        from .quests import VILLAGER_WANTS, ASK_LINES
         if self._q_player is None:
             self._q_player, self._q_worker = {}, {}
         now = time.time()

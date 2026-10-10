@@ -11,7 +11,6 @@ spirits.py — духовете обикалят света сами.
 След около минута изчезва. Ако играчът му говори, остава още малко.
 """
 
-import json
 import random
 import threading
 import time
@@ -113,7 +112,9 @@ class Visits:
 
     # ---------- идване ----------
 
-    def start(self, key=None, player=None, reason="", line=None):
+    def start(self, key=None, player=None, reason="", line=None, act=True):
+        """line=None — AI измисля репликата; "" — идва мълчаливо;
+        act=False — само идва и говори, без задачи, номера и подаръци."""
         online = sorted(self.b.server.online)
         if not online:
             return False, "няма никой"
@@ -130,13 +131,14 @@ class Visits:
             player = min(online, key=lambda p: self.last_for.get(p, 0))
         self.last_for[player] = time.time()
         self.busy = True
-        threading.Thread(target=self._go, args=(key, player, reason, line),
+        threading.Thread(target=self._go,
+                         args=(key, player, reason, line, act),
                          daemon=True).start()
         return True, f"{characters.CHARACTERS[key]['name']} отива при {player}"
 
-    def _go(self, key, player, reason, line):
+    def _go(self, key, player, reason, line, act=True):
         try:
-            self._arrive(key, player, reason, line)
+            self._arrive(key, player, reason, line, act)
         except Exception as e:
             log.warn("Духове", f"{type(e).__name__}: {e}")
         finally:
@@ -165,7 +167,7 @@ class Visits:
             bits.append("нощ" if 13000 <= daytime <= 23000 else "ден")
         return info, "; ".join(bits)
 
-    def _arrive(self, key, player, reason, line):
+    def _arrive(self, key, player, reason, line, act=True):
         ch = characters.CHARACTERS[key]
         info, ctx = self._context(player)
         reply = None
@@ -183,7 +185,8 @@ class Visits:
                                       "content": f"(появяваш се до {player})"}],
                 role="fast", max_tokens=900, timeout=30)
         reply = reply if isinstance(reply, dict) else {}
-        say = (line or reply.get("say") or self._canned(key, player, info))
+        say = line if line == "" else \
+            (line or reply.get("say") or self._canned(key, player, info))
         say = str(say)[:220]
 
         offers = None
@@ -191,13 +194,14 @@ class Visits:
             offers = self._offers(reply.get("offers"))
         tag = f"bvg_{key}_v"
         self._summon(key, player, tag, offers)
-        world.say(self.s, key, say)
-        world.bubble_tag(self.s, tag, say, 2.4)
+        if say:
+            world.say(self.s, key, say)
+            world.bubble_tag(self.s, tag, say, 2.4)
         self.active = {"key": key, "player": player, "tag": tag,
                        "until": time.time() + STAY, "made": time.time(),
                        "pos": getattr(self, "_pos", None) or
                        self.b.pos.get(player)}
-        self.log.append((time.time(), key, player, say))
+        self.log.append((time.time(), key, player, say or "(дойде)"))
         self.log = self.log[-30:]
         log.info("Духове", f"{ch['name']} се появи при {player}")
         try:
@@ -205,7 +209,8 @@ class Visits:
                                  f"{say[:70]}")
         except Exception:
             pass
-        self._act(key, player, reply, info)
+        if act:
+            self._act(key, player, reply, info)
 
     def _canned(self, key, player, info):
         hp = info.get("health")

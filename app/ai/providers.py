@@ -87,7 +87,7 @@ NOT_CHAT = ("tts", "image", "live", "embedding", "embed", "audio",
             "transcribe", "robotics", "computer-use", "omni", "veo",
             "imagen", "lyria", "aqa", "learnlm", "banana", "native",
             "translate", "research", "antigravity", "customtools", "gemma",
-            "realtime", "search", "instruct", "moderation", "whisper",
+            "realtime", "search", "moderation", "whisper", "magistral",
             "dall-e", "codex", "sora", "babbage", "davinci", "chat-latest",
             "guard", "orpheus", "ocr", "voxtral", "codestral", "devstral",
             "pixtral", "vision", "coder", "safeguard", "playai", "distil",
@@ -183,9 +183,13 @@ def _khash(key):
 # Списък с модели и подредба
 # ---------------------------------------------------------------------------
 
-def _is_chat(mid):
+def _is_chat(mid, prov=None):
     low = mid.lower()
-    return not any(w in low for w in NOT_CHAT)
+    if any(w in low for w in NOT_CHAT):
+        return False
+    # при Google и OpenAI „instruct" е стар модел за допълване, не за чат;
+    # при другите (Llama, Kimi...) е точно чат моделът
+    return not ("instruct" in low and prov in (None, "gemini", "openai"))
 
 
 def _gemini_rank(mid):
@@ -258,6 +262,8 @@ def _rank(prov, models, role):
         return ranked
     if prov == "openai":
         return sorted(models, key=_openai_rank)
+    if prov in ("groq", "cerebras"):
+        role = "smart"         # там и големите модели са мигновени
     return sorted(models, key=lambda m: _generic_rank(m, role))
 
 
@@ -277,7 +283,7 @@ def _fetch_gemini(key):
             if "generateContent" not in methods:
                 continue
             mid = (m.get("name") or "").split("/", 1)[-1]
-            if mid.startswith("gemini") and _is_chat(mid):
+            if mid.startswith("gemini") and _is_chat(mid, "gemini"):
                 out.append(mid)
         token = data.get("nextPageToken")
         if not token:
@@ -303,7 +309,7 @@ def _fetch_compatible(prov, key):
     ids = []
     for m in items:
         mid = m.get("id", "") if isinstance(m, dict) else str(m)
-        if not mid or not _is_chat(mid):
+        if not mid or not _is_chat(mid, prov):
             continue
         if prov == "openai" and not mid.startswith("gpt-"):
             continue
@@ -615,6 +621,10 @@ def _compatible(prov, key, model, system, messages, audio, timeout,
                 max_tokens, plain):
     msgs = [{"role": "system", "content": system}] + messages
     body = {"model": model, "messages": msgs}
+    if prov == "groq":
+        # безплатният лимит е ~8000 токена в минута, а броят се и
+        # поисканите за отговора
+        max_tokens = min(max_tokens, 3000)
     if not plain:
         body["response_format"] = {"type": "json_object"}
         if prov == "openai":
@@ -637,7 +647,10 @@ def _compatible(prov, key, model, system, messages, audio, timeout,
     try:
         choice = data["choices"][0]
         text = (choice.get("message") or {}).get("content") or ""
-    except (KeyError, IndexError, TypeError):
+        if isinstance(text, list):          # Mistral: [{type, text}, ...]
+            text = "".join(c.get("text", "") for c in text
+                           if isinstance(c, dict) and c.get("type") == "text")
+    except (KeyError, IndexError, TypeError, AttributeError):
         raise _Fail("busy", f"{who}: странен отговор.")
     if not text.strip():
         if choice.get("finish_reason") == "length":
