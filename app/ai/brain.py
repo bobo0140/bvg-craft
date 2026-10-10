@@ -260,7 +260,7 @@ class Brain:
         self.slow_at = time.time()
         self.villages.refresh_positions()
         self.villages.auto_found(self.dims)
-        self.villages.offer_quests(self.quests)
+        self.villages.offer_quests(self.quests, self.dims)
 
     def givers(self):
         out = self.villages.giver_positions()

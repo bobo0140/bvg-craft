@@ -763,7 +763,7 @@ class Villages:
     _q_player = None
     _q_worker = None
 
-    def offer_quests(self, quests, director_note=None):
+    def offer_quests(self, quests, dims=None):
         """Свободен селянин до играч — понякога иска нещо."""
         if not self.cfg.get("villager_quests", True):
             return
@@ -771,7 +771,8 @@ class Villages:
         if self._q_player is None:
             self._q_player, self._q_worker = {}, {}
         now = time.time()
-        players = self.positions()
+        players = {n: p for n, p in self.positions().items()
+                   if (dims or {}).get(n, "overworld") == "overworld"}
         for w in self.workers:
             if w.get("_job") or not w.get("pos"):
                 continue
