@@ -358,7 +358,9 @@ def plaza(style="oak", size="medium", seed=0):
     ops = [("F", 0, 0, 0, 6, 0, 6, "stone_bricks"),
            ("F", 1, 0, 1, 5, 0, 5, "polished_andesite"),
            ("S", 3, 0, 3, "chiseled_stone_bricks"),
-           ("S", 3, 1, 3, "campfire[lit=true]")]
+           # камбаната събира селяните около площада
+           ("S", 3, 1, 3, "bell[attachment=floor,facing=north]"),
+           ("S", 1, 1, 1, "campfire[lit=true]")]
     for x, z in ((0, 0), (6, 0), (0, 6), (6, 6)):
         ops.append(("F", x, 1, z, x, 3, z, fence))
         ops.append(("S", x, 4, z, "lantern"))

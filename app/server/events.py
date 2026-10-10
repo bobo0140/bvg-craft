@@ -27,6 +27,14 @@ LOGIN = re.compile(r"^([A-Za-z0-9_]{1,16})\[/(.+?):(\d+)\] logged in with "
 ADV = re.compile(r"^([A-Za-z0-9_]{1,16}) has (?:made the advancement|"
                  r"completed the challenge|reached the goal) \[(.+)\]$")
 READY = re.compile(r'Done \([\d.,]+s\)! For help, type "help"')
+# Именувано същество (бос) умря — Minecraft го пише в конзолата с убиеца:
+# Named entity Zombie['Грохот'/282, ...] died: Грохот was slain by Mia
+NAMED = re.compile(r"^Named entity .*?\] died: (.+)$")
+
+# Ранговете стоят пред името в чата, в TAB и в съобщенията за влизане:
+# „[Герой] Mia joined the game". Махаме ги, преди да разчитаме реда.
+RANKS = ("Новак", "Странник", "Герой", "Шампион", "Легенда")
+RANK_TAG = re.compile(r"\[(?:%s)\]\s?" % "|".join(RANKS))
 LIST = re.compile(r"There are (\d+) of a max of (\d+) players online:\s*(.*)$",
                   re.S)
 
@@ -68,12 +76,12 @@ def decode(raw: bytes) -> str:
 
 
 def strip(line: str) -> str:
-    return PREFIX.sub("", clean(line), count=1).strip()
+    return RANK_TAG.sub("", PREFIX.sub("", clean(line), count=1)).strip()
 
 
 def parse_list(reply: str):
     """Отговорът на `list` -> (брой, максимум, [имена]) или None."""
-    m = LIST.search(SECTION.sub("", reply or ""))
+    m = LIST.search(RANK_TAG.sub("", SECTION.sub("", reply or "")))
     if not m:
         return None
     names = [n.strip() for n in m.group(3).split(",") if n.strip()]
@@ -109,6 +117,12 @@ def parse(line: str, online=None):
     if m:
         return {"type": "advancement", "player": m.group(1),
                 "name": m.group(2)}
+    m = NAMED.match(text)
+    if m:
+        msg = m.group(1)
+        km = re.search(r" by ([A-Za-z0-9_]{1,16})(?: using .*)?$", msg)
+        return {"type": "named_death", "message": msg,
+                "killer": km.group(1) if km else None}
 
     first, _, rest = text.partition(" ")
     if rest and any(rest.startswith(w) or w in rest for w in DEATH_WORDS):

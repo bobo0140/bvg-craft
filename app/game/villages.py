@@ -65,12 +65,20 @@ START_LINES = ["Хайде, почвам.", "Запретвам ръкави!", 
 class Job:
     def __init__(self, kind, style="oak", size="medium", origin=None, rot=0,
                  seed=0, step=0, found_min=None, village=None, owner=None,
-                 label=None):
+                 label=None, custom=None):
         self.kind, self.style, self.size = kind, style, size
         self.origin, self.rot, self.seed = origin, rot, seed
         self.step, self.found_min = step, found_min
         self.village, self.owner = village, owner
-        self.plan = B.make(kind, style, size, seed)
+        self.custom = custom
+        if custom:
+            self.plan = B.Plan("design", custom["w"], custom["d"],
+                               custom["h"], [tuple(o) for o in custom["ops"]],
+                               custom.get("label", "постройка"),
+                               door=tuple(custom.get("door") or
+                                          (custom["w"] // 2, custom["d"])))
+        else:
+            self.plan = B.make(kind, style, size, seed)
         self.label = label or self.plan.label
         self.started = time.time()
         self.prelude = self._prelude()
@@ -105,7 +113,7 @@ class Job:
                 "origin": self.origin, "rot": self.rot, "seed": self.seed,
                 "step": self.step, "found_min": self.found_min,
                 "village": self.village, "owner": self.owner,
-                "label": self.label}
+                "label": self.label, "custom": self.custom}
 
     @classmethod
     def from_dict(cls, d):
@@ -113,10 +121,27 @@ class Job:
                    tuple(d["origin"]) if d.get("origin") else None,
                    d.get("rot", 0), d.get("seed", 0), d.get("step", 0),
                    d.get("found_min"), d.get("village"), d.get("owner"),
-                   d.get("label"))
+                   d.get("label"), d.get("custom"))
 
 
 STYLE_FOUND = {k: v["found"] for k, v in B.STYLES.items()}
+
+# Истинска търговия със селяните — десен бутон върху тях
+PROF_OFFERS = {
+    "mason": [("emerald 1", "stone_bricks 16"), ("clay_ball 10", "emerald 1"),
+              ("emerald 2", "polished_andesite 16"),
+              ("emerald 3", "chiseled_stone_bricks 8"),
+              ("emerald 4", "lantern 4")],
+    "farmer": [("wheat 20", "emerald 1"), ("emerald 1", "bread 6"),
+               ("emerald 2", "cake 1"), ("emerald 3", "golden_carrot 4"),
+               ("carrot 22", "emerald 1"), ("emerald 2", "pumpkin_pie 4")],
+    "toolsmith": [("coal 15", "emerald 1"), ("emerald 3", "iron_pickaxe 1"),
+                  ("emerald 7", "diamond_pickaxe 1"),
+                  ("emerald 2", "iron_shovel 1")],
+    "cartographer": [("paper 24", "emerald 1"), ("emerald 4", "map 1"),
+                     ("emerald 5", "compass 1"), ("emerald 6", "spyglass 1")],
+}
+ROAM_NOTE = "Селяните, които не строят, се разхождат свободно из селото."
 
 
 class Villages:
@@ -208,10 +233,20 @@ class Villages:
         return random.choice(free) if free else random.choice(NAMES)
 
     def _spawn(self, w, pos, yaw=0.0):
+        if not w.get("offers"):
+            pool = PROF_OFFERS.get(w.get("prof", "mason"), PROF_OFFERS["mason"])
+            w["offers"] = random.sample(pool, min(3, len(pool)))
         world.spawn_villager(self.s, self._tag(w), w["name"], "yellow",
                              w.get("prof", "mason"), pos, yaw,
-                             extra_tags=("bvg_worker",))
+                             extra_tags=("bvg_worker",),
+                             offers=w.get("offers"))
         w["pos"] = list(pos)
+        w["free"] = False
+
+    def _free(self, w):
+        """Без работа — пуска го да се разхожда като истински селянин."""
+        world.set_ai(self.s, self._tag(w), True)
+        w["free"] = True
 
     def new_worker(self, near_pos, village=None, prof="mason"):
         with self._lock:
@@ -346,8 +381,29 @@ class Villages:
                          daemon=True).start()
         return True, f"{w['name']} търси място за {plan.label}."
 
+    def request_plan(self, near_name, custom, owner=None):
+        """Постройка по чертеж, измислен от AI (вече проверен)."""
+        if not self.cfg.get("workers_enabled", True):
+            return False, "Селяните са изключени в настройките."
+        pos = self.positions().get(near_name)
+        if not pos:
+            return False, f"Не виждам {near_name} в света."
+        free = [w for w in self.workers if w["id"] not in self._busy_ids()]
+        w = min(free, key=lambda w: world.distance(w.get("pos"), pos)) \
+            if free else self.new_worker((pos[0] + 2, pos[1], pos[2] + 2))
+        if w is None:
+            return False, "Всички селяни са заети."
+        job = Job("design", custom=custom)
+        self.searching[w["id"]] = job.label
+        threading.Thread(target=self._search_and_start,
+                         args=(w, job.plan, "design", "oak", "medium",
+                               (pos[0], pos[2]), (pos[0], pos[2]), 9, 22,
+                               owner, None, custom),
+                         daemon=True).start()
+        return True, f"{w['name']} търси място за {job.label}."
+
     def _search_and_start(self, w, plan, kind, style, size, center, face_to,
-                          rmin, rmax, owner, village):
+                          rmin, rmax, owner, village, custom=None):
         try:
             site = self.find_site(plan, center, face_to, rmin, rmax)
         except Exception as e:
@@ -362,8 +418,9 @@ class Villages:
             log.info("Села", f"{w['name']}: няма място за {plan.label}.")
             return
         origin, rot, low = site
-        job = Job(kind, style, size, origin, rot, plan.seed, 0, low,
-                  village, owner, plan.label)
+        job = Job(kind, style, size, origin, rot,
+                  getattr(plan, "seed", 0), 0, low, village, owner,
+                  plan.label, custom)
         box = B.bbox(plan, origin, rot)
         with self._lock:
             self.reserved.append(box)
@@ -551,6 +608,7 @@ class Villages:
                          random.choice(DONE_LINES), pos)
         self.s.send(f"kill @e[tag={self._tag(w)}_bubble]")
         world.firework(self.s, f"@e[tag={self._tag(w)},limit=1]")
+        self._free(w)
         v = self.village(j.village)
         with self._lock:
             w.pop("_job", None)
@@ -639,6 +697,120 @@ class Villages:
             pos = w.get("pos")
             if pos:
                 self._spawn(w, tuple(pos))
+                if not w.get("_job"):
+                    self._free(w)
+
+    def refresh_positions(self):
+        """Свободните селяни се движат — питаме къде са."""
+        ws = [w for w in self.workers if w.get("free")]
+        if not ws:
+            return
+        res = self.s.query_many([f"data get entity @e[tag={self._tag(w)},"
+                                 f"limit=1] Pos" for w in ws])
+        for w, (ok, r) in zip(ws, res):
+            m = world.POS_RE.search(r or "") if ok else None
+            if m:
+                w["pos"] = [round(float(v), 1) for v in m.groups()]
+            elif ok and "no entity" in (r or "").lower() and w.get("pos"):
+                self._spawn(w, tuple(w["pos"]))     # изчезнал — обратно
+                self._free(w)
+
+    def giver_positions(self):
+        return {f"w{w['id']}": tuple(w["pos"]) for w in self.workers
+                if w.get("pos")}
+
+    # ---------- сами ----------
+
+    STAY = 120          # толкова сек играчът стои наоколо, за да стане село
+    _anchor = None
+    next_auto = 0.0
+
+    def auto_found(self, dims=None):
+        """Ново село само, щом някой се е задържал далеч от селата."""
+        if not (self.cfg.get("workers_enabled", True) and
+                self.cfg.get("village_auto", True)):
+            return
+        now = time.time()
+        if now < self.next_auto:
+            return
+        self.next_auto = now + 20
+        if self._anchor is None:
+            self._anchor = {}
+        if len(self.villages) >= MAX_VILLAGES or \
+                "ново село" in self.searching.values():
+            return
+        for name, p in self.positions().items():
+            if (dims or {}).get(name, "overworld") not in ("overworld",
+                                                             "minecraft:overworld"):
+                continue
+            if any(math.hypot(v["center"][0] - p[0], v["center"][2] - p[2])
+                   < 140 for v in self.villages):
+                self._anchor.pop(name, None)
+                continue
+            a = self._anchor.get(name)
+            if not a or math.hypot(a[0][0] - p[0], a[0][2] - p[2]) > 60:
+                self._anchor[name] = (p, now)
+                continue
+            if now - a[1] >= self.STAY:
+                ok, msg = self.found_village(name)
+                if ok:
+                    log.ok("Села", f"Ново село до {name} — само. {msg}")
+                    self.next_auto = now + 300
+                    self._anchor.clear()
+                    return
+
+    QUEST_EVERY = 360      # сек между две задачи за един и същ играч
+    _q_player = None
+    _q_worker = None
+
+    def offer_quests(self, quests, director_note=None):
+        """Свободен селянин до играч — понякога иска нещо."""
+        if not self.cfg.get("villager_quests", True):
+            return
+        from .quests import VILLAGER_WANTS, ASK_LINES, KIND_TEXT
+        if self._q_player is None:
+            self._q_player, self._q_worker = {}, {}
+        now = time.time()
+        players = self.positions()
+        for w in self.workers:
+            if w.get("_job") or not w.get("pos"):
+                continue
+            if now - self._q_worker.get(w["id"], 0) < 180:
+                continue
+            for name, p in players.items():
+                if world.distance(p, w["pos"]) > 7:
+                    continue
+                if now - self._q_player.get(name, 0) < self.QUEST_EVERY:
+                    continue
+                if len(quests.active_for(name)) >= 2:
+                    continue
+                pool = VILLAGER_WANTS.get(w.get("prof"), []) + \
+                    VILLAGER_WANTS["*"]
+                kind, target, amount, reward = random.choice(pool)
+                at = None
+                if kind == "visit":
+                    others = [v for v in self.villages
+                              if v["id"] != w.get("village")]
+                    if others:
+                        c = random.choice(others)["center"]
+                        at = (int(c[0]), int(c[2]))
+                    else:
+                        ang = random.uniform(0, math.tau)
+                        at = (int(p[0] + math.cos(ang) * 120),
+                              int(p[2] + math.sin(ang) * 120))
+                giver = {"name": w["name"], "color": "yellow",
+                         "kind": "villager", "ref": f"w{w['id']}"}
+                ok, label = quests.give(name, kind, target, amount,
+                                        reward=reward, fame=12, giver=giver,
+                                        minutes=40, at=at)
+                self._q_player[name] = now
+                self._q_worker[w["id"]] = now
+                if ok:
+                    world.speak_near(self.s, w["name"], "yellow",
+                                     random.choice(ASK_LINES).format(
+                                         p=name, task=label.lower()),
+                                     tuple(w["pos"]), 24)
+                break
 
     # ---------- за режисьора и интерфейса ----------
 

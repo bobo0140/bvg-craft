@@ -600,13 +600,407 @@ CONTESTS = {
 CONTEST_NAMES = {k: v["title"] for k, v in CONTESTS.items()}
 
 
+
+# ---------------------------------------------------------------------------
+# Босове: създания с име, броня, фази и лента с живота горе на екрана
+# ---------------------------------------------------------------------------
+
+BOSS_MOBS = {"zombie", "husk", "drowned", "skeleton", "stray", "bogged",
+             "wither_skeleton", "piglin_brute", "vindicator", "pillager",
+             "evoker", "ravager", "spider", "witch", "blaze",
+             "zombified_piglin", "cave_spider"}
+MINION_MOBS = {"zombie", "skeleton", "spider", "husk", "stray", "silverfish",
+               "vex", "cave_spider", "drowned", "bogged", "pillager",
+               "zombified_piglin", "slime", "magma_cube"}
+SLOT_OF = (("_helmet", "head"), ("_head", "head"), ("_skull", "head"),
+           ("_chestplate", "chest"), ("_leggings", "legs"),
+           ("_boots", "feet"))
+ID_RE = re.compile(r"^(?:minecraft:)?([a-z0-9_]{2,40})$")
+
+BOSS_PRESETS = [
+    {"name": "Грохот Каменния", "mob": "zombie", "scale": 2.6, "hp": 320,
+     "damage": 9, "speed": 0.26, "color": "dark_red",
+     "armor": ["netherite_helmet", "iron_chestplate"], "weapon": "stone_axe",
+     "minions": {"mob": "zombie", "count": 3},
+     "reward": ["diamond 4", "golden_apple 2"],
+     "taunts": ["Ще ви смачкам като мравки!", "Земята трепери от мен!",
+                "Още ли сте живи?!"]},
+    {"name": "Кралицата на паяците", "mob": "spider", "scale": 3.0,
+     "hp": 260, "damage": 7, "speed": 0.34, "color": "dark_purple",
+     "minions": {"mob": "cave_spider", "count": 4},
+     "reward": ["diamond 3", "string 32", "golden_apple 1"],
+     "taunts": ["Мрежата ми е навсякъде...", "Децата ми са гладни!"]},
+    {"name": "Сенчестият стрелец", "mob": "skeleton", "scale": 1.8,
+     "hp": 220, "damage": 6, "speed": 0.3, "color": "dark_gray",
+     "armor": ["chainmail_helmet", "chainmail_chestplate"], "weapon": "bow",
+     "minions": {"mob": "stray", "count": 3},
+     "reward": ["diamond 3", "arrow 64", "bow 1"],
+     "taunts": ["Не можеш да се скриеш от мен.", "Стрелите ми не пропускат."]},
+    {"name": "Борил Нашественика", "mob": "vindicator", "scale": 1.7,
+     "hp": 280, "damage": 10, "speed": 0.33, "color": "gray",
+     "armor": ["iron_helmet"], "weapon": "diamond_axe",
+     "minions": {"mob": "pillager", "count": 3},
+     "reward": ["diamond 4", "emerald 12", "totem_of_undying 1"],
+     "taunts": ["Селото е мое!", "Брадвата ми е жадна!"]},
+    {"name": "Гнилия крал", "mob": "husk", "scale": 2.2, "hp": 300,
+     "damage": 8, "speed": 0.27, "color": "gold",
+     "armor": ["golden_helmet", "golden_chestplate"], "weapon": "golden_sword",
+     "minions": {"mob": "husk", "count": 4},
+     "reward": ["gold_ingot 12", "diamond 3", "golden_apple 2"],
+     "taunts": ["Короната ми е от кости!", "Пустинята ще ви погълне!"]},
+]
+
+
+def boss_spec(raw):
+    """Проверява описанието на бос (от AI или готово). -> чист речник."""
+    raw = dict(raw or {})
+    mob = str(raw.get("mob", "zombie")).replace("minecraft:", "").lower()
+    if mob not in BOSS_MOBS:
+        mob = "zombie"
+
+    def num(k, lo, hi, d):
+        try:
+            return max(lo, min(float(raw.get(k, d)), hi))
+        except (TypeError, ValueError):
+            return d
+    spec = {"name": str(raw.get("name") or "Безименния")[:28],
+            "mob": mob, "scale": num("scale", 0.8, 4.0, 2.0),
+            "hp": int(num("hp", 60, 800, 250)),
+            "damage": num("damage", 2, 20, 8),
+            "speed": num("speed", 0.15, 0.45, 0.28),
+            "color": world.color(raw.get("color"), "dark_red"),
+            "armor": [], "weapon": None,
+            "reward": [r for r in (raw.get("reward") or ["diamond 3"])
+                       if world.item_spec(r)][:4] or ["diamond 3"],
+            "taunts": [str(t)[:90] for t in (raw.get("taunts") or [])][:5],
+            "minions": None}
+    for a in (raw.get("armor") or [])[:4]:
+        m = ID_RE.match(str(a).lower())
+        if m and any(m.group(1).endswith(sfx) for sfx, _ in SLOT_OF):
+            spec["armor"].append(m.group(1))
+    w = ID_RE.match(str(raw.get("weapon") or "").lower())
+    if w:
+        spec["weapon"] = w.group(1)
+    mn = raw.get("minions") or {}
+    if isinstance(mn, dict):
+        mm = str(mn.get("mob", "")).replace("minecraft:", "").lower()
+        if mm in MINION_MOBS:
+            try:
+                spec["minions"] = {"mob": mm,
+                                   "count": max(1, min(int(mn.get("count", 3)),
+                                                       6))}
+            except (TypeError, ValueError):
+                pass
+    if not any(slot == "head" for a in spec["armor"]
+               for sfx, slot in SLOT_OF if a.endswith(sfx)) and \
+            mob in ("zombie", "skeleton", "stray", "drowned", "bogged"):
+        spec["armor"].insert(0, "iron_helmet")     # да не изгори на слънце
+    return spec
+
+
+def boss_nbt(spec):
+    hp = spec["hp"]
+    attrs = [("max_health", hp), ("scale", spec["scale"]),
+             ("attack_damage", spec["damage"]),
+             ("movement_speed", spec["speed"]),
+             ("knockback_resistance", 0.7), ("follow_range", 48)]
+    a = ",".join(f'{{id:"minecraft:{k}",base:{v}}}' for k, v in attrs)
+    eq = []
+    for item in spec["armor"]:
+        slot = next(sl for sfx, sl in SLOT_OF if item.endswith(sfx))
+        eq.append(f'{slot}:{{id:"minecraft:{item}",count:1}}')
+    if spec["weapon"]:
+        eq.append(f'mainhand:{{id:"minecraft:{spec["weapon"]}",count:1}}')
+    equip = f",equipment:{{{','.join(eq)}}}" if eq else ""
+    return (f'{{CustomName:{{text:"{world.esc(spec["name"])}",'
+            f'color:"{spec["color"]}",bold:true}},CustomNameVisible:1b,'
+            f'Tags:["bvg_boss"],PersistenceRequired:1b,Health:{hp}f,'
+            f"attributes:[{a}]{equip},drop_chances:{{head:0.0f,chest:0.0f,"
+            f"legs:0.0f,feet:0.0f,mainhand:0.0f,offhand:0.0f}}}}")
+
+
+class Boss(Event):
+    key = "boss"
+    title = "БОС"
+    duration = 600
+    own_bar = True
+    BAR = "bvg:boss"
+
+    def __init__(self, engine, spec=None, target=None):
+        super().__init__(engine)
+        self.spec = boss_spec(spec or random.choice(BOSS_PRESETS))
+        self.title = self.spec["name"]
+        self.target = target
+        self.phase = 1
+        self.last_pos = None
+        self.missing = 0
+        self.next_taunt = time.time() + 40
+
+    def start(self):
+        ps = self.players()
+        if self.target not in ps:
+            self.target = random.choice(ps)
+        sp = self.spec
+        self.s.send(f"kill @e[tag=bvg_boss]")
+        self.s.send(f"kill @e[tag=bvg_minion]")
+        self.s.send(f"execute at {self.target} run summon {sp['mob']} "
+                    f"~{random.choice([-9, 9])} ~1 ~{random.choice([-9, 9])} "
+                    f"{boss_nbt(sp)}")
+        self.s.send(f"bossbar remove {self.BAR}")
+        self.s.send(f'bossbar add {self.BAR} {{"text":"{world.esc(sp["name"])}",'
+                    f'"color":"{sp["color"]}","bold":true}}')
+        self.s.send(f"bossbar set {self.BAR} color red")
+        self.s.send(f"bossbar set {self.BAR} style notched_10")
+        self.s.send(f"bossbar set {self.BAR} max {sp['hp']}")
+        self.s.send(f"bossbar set {self.BAR} value {sp['hp']}")
+        self.s.send(f"bossbar set {self.BAR} players @a")
+        self.s.send(f"execute at {self.target} run playsound "
+                    f"minecraft:entity.wither.spawn hostile @a ~ ~ ~ 0.8 0.8")
+        world.announce(self.s, f"☠ {sp['name']}", "Бос се появи!", "dark_red")
+        world.say(self.s, "keeper", f"Пазете се! {sp['name']} дойде за "
+                                    f"{self.target}. Който го повали — слава!")
+        if sp["taunts"]:
+            world.speak(self.s, sp["name"], sp["color"], sp["taunts"][0])
+        self._minions(1)
+
+    def _minions(self, mult):
+        mn = self.spec["minions"]
+        if not mn:
+            return
+        for _ in range(mn["count"] * mult):
+            self.s.send(f"execute at @e[tag=bvg_boss,limit=1] run summon "
+                        f"{mn['mob']} ~{random.randint(-4, 4)} ~ "
+                        f"~{random.randint(-4, 4)} "
+                        f'{{Tags:["bvg_minion"],PersistenceRequired:1b}}')
+
+    def tick(self):
+        if self.done:
+            return
+        res = self.s.query_many([
+            "data get entity @e[tag=bvg_boss,limit=1] Health",
+            "data get entity @e[tag=bvg_boss,limit=1] Pos"])
+        hp = None
+        if res and res[0][0]:
+            m = re.search(r"data:\s*([\d.]+)f", res[0][1] or "")
+            hp = float(m.group(1)) if m else None
+        if len(res) > 1 and res[1][0]:
+            m = world.POS_RE.search(res[1][1] or "")
+            if m:
+                self.last_pos = tuple(float(v) for v in m.groups())
+        if hp is None:
+            self.missing += 1
+            if self.missing >= 3:            # няма го, а не видяхме убиеца
+                self.finish(self._nearest())
+            return
+        self.missing = 0
+        self.s.send(f"bossbar set {self.BAR} value {int(hp)}", optional=True)
+        frac = hp / max(1, self.spec["hp"])
+        if self.phase == 1 and frac < 0.66:
+            self.phase = 2
+            world.announce(self.s, f"{self.spec['name']} побесня!",
+                           "Втора фаза", "red")
+            self.s.send("effect give @e[tag=bvg_boss] minecraft:speed 60 1 "
+                        "true")
+            self._minions(1)
+        elif self.phase == 2 and frac < 0.33:
+            self.phase = 3
+            world.announce(self.s, f"{self.spec['name']} е на ръба!",
+                           "Последна фаза — довършете го!", "gold")
+            self.s.send("effect give @e[tag=bvg_boss] minecraft:strength 60 "
+                        "1 true")
+            self.s.send("effect give @e[tag=bvg_boss] minecraft:regeneration "
+                        "8 1 true")
+            self._minions(2)
+        if time.time() > self.next_taunt and self.spec["taunts"]:
+            self.next_taunt = time.time() + random.uniform(35, 60)
+            world.speak(self.s, self.spec["name"], self.spec["color"],
+                        random.choice(self.spec["taunts"]))
+        self.s.send("execute at @e[tag=bvg_boss] run particle "
+                    "minecraft:soul_fire_flame ~ ~1 ~ 0.6 1 0.6 0.02 12",
+                    optional=True)
+        if time.time() - self.started > self.duration:
+            self.s.send("kill @e[tag=bvg_boss]")
+            world.say(self.s, "keeper", f"{self.spec['name']} се оттегли в "
+                                        f"мрака. Следващия път!")
+            self.finish(None)
+
+    def _nearest(self):
+        best, bd = None, 40
+        for p in self.players():
+            d = world.distance(self.e.positions().get(p), self.last_pos)
+            if d < bd:
+                best, bd = p, d
+        return best
+
+    def on_event(self, ev):
+        if ev.get("type") == "named_death" and \
+                ev.get("message", "").startswith(self.spec["name"]):
+            killer = ev.get("killer")
+            self.finish(killer if killer in self.e.online()
+                        else self._nearest())
+
+    def finish(self, winner):
+        if self.done:
+            return
+        self.done = True
+        self.s.send(f"bossbar remove {self.BAR}")
+        self.s.send("kill @e[tag=bvg_minion]")
+        if not winner:
+            self.s.send("kill @e[tag=bvg_boss]")
+            return
+        sp = self.spec
+        world.reward(self.s, winner, sp["reward"], 120,
+                     title=f"⚔ {sp['name']} падна!",
+                     reason="Ти нанесе последния удар")
+        world.announce(self.s, f"⚔ {winner} повали {sp['name']}!", "",
+                       "gold")
+        self.e.fame(winner, 60, f"повали {sp['name']}")
+        for p in self.players():
+            if p != winner and world.distance(self.e.positions().get(p),
+                                              self.last_pos) < 48:
+                give(self.s, p, "golden_apple 1")
+                self.e.fame(p, 20, f"бой с {sp['name']}")
+        self.e.won(winner, sp["name"])
+
+
+class BloodMoon(Event):
+    key = "bloodmoon"
+    title = "КЪРВАВА ЛУНА"
+    duration = 150
+
+    def start(self):
+        self.dead = set()
+        self.s.send("time set midnight")
+        self.s.send("weather thunder 160")
+        world.announce(self.s, "🌑 КЪРВАВА ЛУНА", "Оцелейте до зазоряване",
+                       "dark_red")
+        world.say(self.s, "keeper", "Луната почервеня. Мъртвите се надигат "
+                                    "по-често. Оцелелите ще бъдат наградени.")
+        self.next_wave = time.time()
+
+    def tick(self):
+        if time.time() >= self.next_wave:
+            self.next_wave = time.time() + 20
+            for p in self.players():
+                for _ in range(1 + self.e.cfg.get("chaos", 2) // 2):
+                    mob = random.choice(["zombie", "skeleton", "husk",
+                                         "spider", "stray"])
+                    self.s.send(
+                        f"execute at {p} run summon {mob} "
+                        f"~{random.choice([-1, 1]) * random.randint(8, 14)} ~1 "
+                        f"~{random.choice([-1, 1]) * random.randint(8, 14)} "
+                        f'{{Tags:["bvg_blood"],PersistenceRequired:1b}}')
+                self.s.send(f"execute at {p} run particle "
+                            f"minecraft:dust{{color:[0.8,0.0,0.0],scale:2.0}} "
+                            f"~ ~2 ~ 6 3 6 0 40", optional=True)
+        super().tick()
+
+    def on_event(self, ev):
+        if ev["type"] == "death":
+            self.dead.add(ev["player"])
+
+    def finish(self, winner):
+        self.done = True
+        self.s.send("kill @e[tag=bvg_blood]")
+        self.s.send("time set day")
+        self.s.send("weather clear")
+        alive = [p for p in self.players() if p not in self.dead]
+        for p in alive:
+            give(self.s, p, random.choice(REWARD_SMALL))
+            self.e.fame(p, 15, "оцеля кървавата луна")
+        world.say(self.s, "keeper", ("Слънцето изгря. Оцелели: " +
+                                     ", ".join(alive)) if alive else
+                  "Слънцето изгря над празно поле...")
+
+
+class GoldRain(Event):
+    key = "goldrain"
+    title = "ЗЛАТЕН ДЪЖД"
+    duration = 30
+
+    def start(self):
+        world.announce(self.s, "✨ ЗЛАТЕН ДЪЖД", "Събирайте!", "gold")
+        world.say(self.s, "keeper", "Небето е щедро днес. Бързо!")
+
+    def tick(self):
+        for p in self.players():
+            for _ in range(4):
+                item = random.choices(["gold_nugget", "gold_ingot", "emerald",
+                                       "diamond"], [12, 4, 3, 1])[0]
+                self.s.send(f"execute at {p} run summon item "
+                            f"~{random.randint(-6, 6)} ~{random.randint(8, 14)} "
+                            f"~{random.randint(-6, 6)} "
+                            f'{{Item:{{id:"minecraft:{item}",count:'
+                            f"{random.randint(1, 3)}}}}}", optional=True)
+            self.s.send(f"execute at {p} run particle minecraft:wax_on "
+                        f"~ ~6 ~ 5 2 5 0 30", optional=True)
+        super().tick()
+
+
+class Invasion(Event):
+    key = "invasion"
+    title = "НАШЕСТВИЕ"
+    duration = 300
+
+    def start(self):
+        self.where = None
+        self.kills = 0
+        ps = self.players()
+        target = random.choice(ps)
+        vpos = self.e.village_near(target) if hasattr(self.e, "village_near") \
+            else None
+        self.where = vpos
+        anchor = (f"positioned {vpos[0]} {vpos[1]} {vpos[2]}" if vpos
+                  else f"at {target}")
+        n = 4 + 2 * int(self.e.cfg.get("chaos", 2))
+        for i in range(n):
+            mob = "vindicator" if i % 3 == 0 else "pillager"
+            self.s.send(f"execute {anchor} run summon {mob} "
+                        f"~{random.choice([-1, 1]) * random.randint(14, 20)} ~2 "
+                        f"~{random.choice([-1, 1]) * random.randint(14, 20)} "
+                        f'{{Tags:["bvg_raid"],PersistenceRequired:1b}}')
+        world.announce(self.s, "⚔ НАШЕСТВИЕ", "Защитете селото!" if vpos
+                       else f"Разбойници идват към {target}!", "red")
+        world.say(self.s, "keeper", "Разбойници! Пазете селяните — "
+                                    "всеки защитник ще бъде запомнен.")
+        self.s.send("execute at @e[tag=bvg_raid,limit=1] run playsound "
+                    "minecraft:event.raid.horn hostile @a ~ ~ ~ 2 1")
+
+    def tick(self):
+        ok, r = self.s.query("execute if entity @e[tag=bvg_raid]")
+        if ok and "passed" not in (r or "").lower() and \
+                time.time() - self.started > 8:
+            self.finish(True)
+            return
+        super().tick()
+
+    def finish(self, winner):
+        if self.done:
+            return
+        self.done = True
+        self.s.send("kill @e[tag=bvg_raid]")
+        if winner:
+            for p in self.players():
+                give(self.s, p, random.choice(REWARD_SMALL))
+                self.e.fame(p, 25, "отблъсна нашествието")
+            world.announce(self.s, "🛡 Нашествието е отблъснато!", "",
+                           "green")
+            self.s.send("execute as @a at @s run playsound "
+                        "minecraft:ui.toast.challenge_complete master @s")
+        else:
+            world.say(self.s, "keeper", "Разбойниците си тръгнаха с "
+                                        "плячката. Срам!")
+
+
 LIBRARY = {cls.key: cls for cls in (MeteorShower, Bounty, Treasure,
                                     NightOfTheDead, LowGravity, ChickenRain,
-                                    Giant, Riddle, Race)}
+                                    Giant, Riddle, Race, Boss, BloodMoon,
+                                    GoldRain, Invasion)}
 
 # Колко „тежко" е всяко събитие — режисьорът го съобразява с хаоса
-WEIGHT = {"chickens": 0, "gravity": 0, "riddle": 0, "meteors": 1,
-          "treasure": 1, "race": 1, "bounty": 2, "giant": 2, "undead": 3}
+WEIGHT = {"chickens": 0, "gravity": 0, "riddle": 0, "goldrain": 0,
+          "meteors": 1, "treasure": 1, "race": 1, "invasion": 2,
+          "bounty": 2, "giant": 2, "boss": 2, "undead": 3, "bloodmoon": 3}
 
 
 class Engine:
@@ -614,15 +1008,33 @@ class Engine:
 
     BAR = "bvg:event"
 
-    def __init__(self, sender, cfg, online_fn, on_win=None):
+    def __init__(self, sender, cfg, online_fn, on_win=None, on_fame=None,
+                 positions=None, village_near=None):
         self.sender = sender
         self.cfg = cfg
         self.online = online_fn
         self.on_win = on_win
+        self.on_fame = on_fame
+        self.positions = positions or (lambda: {})
+        if village_near:
+            self.village_near = village_near
         self.active = None
         self.history = []
         self.last_result = None
         self._bar = False
+
+    def fame(self, player, pts, reason=""):
+        if self.on_fame:
+            try:
+                self.on_fame(player, pts, reason)
+            except Exception:
+                pass
+
+    def start_boss(self, spec=None, target=None):
+        if self.active and not self.active.done:
+            return False, f"вече върви {self.active.title}"
+        ev = Boss(self, spec=spec, target=target)
+        return self._run(ev, "boss")
 
     def won(self, player, title):
         self.last_result = (time.time(), player, title)
@@ -669,7 +1081,8 @@ class Engine:
             self.active = None
             return False, getattr(ev, "error", None) or "не тръгна"
         self.history.append((time.time(), key))
-        self._bar_show(ev)
+        if not getattr(ev, "own_bar", False):
+            self._bar_show(ev)
         return True, ev.title
 
     def can_start(self, key):
@@ -715,9 +1128,10 @@ class Engine:
             self.active = None
             self._bar_hide()
             return
-        left = max(0, int(a.duration - (time.time() - a.started)))
-        self.sender.send(f"bossbar set {self.BAR} value {left}",
-                         optional=True)
+        if self._bar:
+            left = max(0, int(a.duration - (time.time() - a.started)))
+            self.sender.send(f"bossbar set {self.BAR} value {left}",
+                             optional=True)
         try:
             a.tick()
         except Exception as e:

@@ -32,8 +32,12 @@ DEFAULTS = {
     "admins": [],                  # кой може да дава големи задачи на AI-то
 
     # AI
-    "ai_provider": "gemini",
+    "ai_provider": "auto",         # auto = всички услуги с ключ, по ред
     "gemini_key": "",
+    "groq_key": "",
+    "mistral_key": "",
+    "openrouter_key": "",
+    "cerebras_key": "",
     "gemini_model": "auto",        # auto = сам избира наличен модел
     "openai_key": "",
     "openai_model": "auto",
@@ -56,9 +60,11 @@ DEFAULTS = {
 # Стойности по подразбиране от стари версии, които вече не работят
 _STALE = {"gemini_model": ("gemini-2.5-flash", "gemini-2.0-flash",
                            "gemini-2.5-flash-lite", "gemini-1.5-flash", ""),
-          "openai_model": ("gpt-4o-mini", "")}
+          "openai_model": ("gpt-4o-mini", ""),
+          "ai_provider": ("gemini", "")}
 
-SECRETS = ("gemini_key", "openai_key", "rcon_password")
+SECRETS = ("gemini_key", "openai_key", "groq_key", "mistral_key",
+           "openrouter_key", "cerebras_key", "rcon_password")
 
 
 class Config:

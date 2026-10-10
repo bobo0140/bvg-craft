@@ -160,8 +160,20 @@ def spawn_npc(sender, char_key, pos, facing_yaw=0.0):
                    ch["profession"], pos, facing_yaw, extra_tags=("bvg_npc",))
 
 
+def recipes(offers):
+    """[("emerald 2", "diamond 1"), ...] -> Recipes за истинска търговия."""
+    parts = []
+    for buy, sell in offers or []:
+        b, s = item_spec(buy), item_spec(sell)
+        if b and s:
+            parts.append(f'{{buy:{{id:"minecraft:{b[0]}",count:{b[1]}}},'
+                         f'sell:{{id:"minecraft:{s[0]}",count:{s[1]}}},'
+                         f"maxUses:8,rewardExp:0b}}")
+    return ",".join(parts)
+
+
 def spawn_villager(sender, tag, name, col, profession, pos, yaw=0.0,
-                   extra_tags=(), biome="plains"):
+                   extra_tags=(), biome="plains", offers=None):
     x, y, z = pos
     tags = ",".join(f'"{t}"' for t in (tag,) + tuple(extra_tags))
     sender.send(f"kill @e[tag={tag}]")
@@ -172,7 +184,14 @@ def spawn_villager(sender, tag, name, col, profession, pos, yaw=0.0,
         f"NoAI:1b,Invulnerable:1b,Silent:1b,PersistenceRequired:1b,"
         f'Rotation:[{float(yaw):.1f}f,0f],'
         f'VillagerData:{{profession:"minecraft:{profession}",'
-        f'level:5,type:"minecraft:{biome}"}},Offers:{{Recipes:[]}}}}')
+        f'level:5,type:"minecraft:{biome}"}},'
+        f"Offers:{{Recipes:[{recipes(offers)}]}}}}")
+
+
+def set_ai(sender, tag, on):
+    """Пуска селянина да се разхожда (on) или го спира на място."""
+    sender.send(f"data merge entity @e[tag={tag},limit=1] "
+                f"{{NoAI:{0 if on else 1}b}}")
 
 
 def despawn_npc(sender, char_key):
